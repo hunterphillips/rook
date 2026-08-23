@@ -4,8 +4,8 @@ This is the general layering preference for Rook’s code.
 
 - **API** — The external boundary, when one exists. It handles protocol concerns, validation, and translation, then delegates to services.
 - **Service** — Business logic and orchestration. Services coordinate behavior and depend on repositories rather than persistence details.
-- **Repository** — Rook-owned code that directly interfaces with a concrete data store. Repositories translate between application concepts and SQLite, the filesystem, Redis, MySQL, or another persistence system.
-- **Data store** — The concrete persistence system itself, not a required additional code abstraction. SQLite databases, files, Redis, and MySQL are data stores; repositories may use them directly.
+- **Repository** — Rook-owned code that directly interfaces with a concrete data store. Repositories translate between application concepts and concrete persistence systems such as SQLite, the filesystem, or an external database.
+- **Data store** — The concrete persistence system itself, not a required additional code abstraction. SQLite databases, files, and external databases are data stores; repositories may use them directly.
 
 The usual dependency direction is:
 

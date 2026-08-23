@@ -11,7 +11,7 @@
 - [x] Run final validation
 - [x] Synchronize with main before submitting
 - [x] Open and validate the PR — PR #177 is open and mergeable; the required compatibility check passed
-- [ ] Merge with approval
-- [ ] Record outcomes and clean up
+- [x] Merge with approval — PR #177 merged as `a7735896`
+- [x] Record outcomes and clean up — isolated server/client stopped, worktree and branches removed
 
 Planning note: the first fixed-height implementation was explicitly rejected and deleted. The developer approved a replacement dynamic, lazy, scrollbar-hidden layout. Cold ACP session-load latency remains out of scope.

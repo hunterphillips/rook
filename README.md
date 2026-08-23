@@ -4,18 +4,17 @@ Rook is a local-first personal-agent runtime built around ACP (Agent Client Prot
 
 ## Start here
 
-- [Docs index](docs/README.md)
-- [Setup](docs/setup.md)
-- [Configuration](docs/configuration.md)
 - [Product notes](PRODUCT/)
 - [As-built architecture notes](AS-BUILT-ARCHITECTURE/)
+- [Server package](server/README.md)
+- [CLI package](clients/cli/README.md)
 - [Environment repository migration design log](CHANGES/2026-08-01-environment_repo_to_db/)
-- [Environment repository migration recap and verification guide](CHANGES/2026-08-01-environment_repo_to_db/recap.md)
+- [Environment repository migration outcome](CHANGES/2026-08-01-environment_repo_to_db/OUTCOMES.md)
 
 ## Packages
 
-- [server/](server/) — Fastify API organized by domain (`infrastructure`, `sessions`, `runtime`, `environments`, `location`), with three-table environment repositories, shared per-environment writable sources, and per-domain layering only where needed
-- [clients/cli](clients/cli/) — minimal ACP-first command-line client
+- [server/](server/) — Fastify API organized by domain (`infrastructure`, `sessions`, `runtime`, `environments`, `location`), with three-table environment repositories, shared per-environment writable sources, and per-domain layering only where needed; see [server architecture](AS-BUILT-ARCHITECTURE/server.md)
+- [clients/cli](clients/cli/) — minimal ACP-first command-line client; see [CLI architecture](AS-BUILT-ARCHITECTURE/cli.md)
 - [clients/mac](clients/mac/) — native macOS menu bar client with bundle-scoped environment inspection and browser-specific Accessibility handling
 - [clients/iphone](clients/iphone/) — native iPhone client
 - [clients/android](clients/android/) — native Android client
@@ -31,7 +30,7 @@ Rook is a local-first personal-agent runtime built around ACP (Agent Client Prot
 - `./scripts/run-rook.sh android`
 - `./scripts/run-rook.sh stop`
 
-The launcher uses the main checkout as the production-like local profile. Running the same command from a Git worktree starts an isolated development profile with its own port, `ROOK_HOME/rook.sqlite` application database, profile-scoped capability workspaces under `ROOK_HOME/global-workspace/` and `ROOK_HOME/agent-workspaces/`, `~/.rook-<worktree-slug>` state directory, logs, and Mac app identity. The slug includes a short hash of the canonical worktree path so same-named worktrees remain distinct. Development profiles are initially seeded by copying `~/.rook` into their profile home when it does not exist, including the application database so the development profile starts with the same sessions and durable local state. After that, configuration and session/server state remain isolated. The main checkout likewise defaults its application database to `~/.rook/rook.sqlite`. Use `ROOK_RUN_MODE` or `ROOK_PRODUCTION_ROOT` for explicit profile selection, and `RUN_ROOK_HOME` / `RUN_ROOK_DATABASE_PATH` for launcher-specific overrides.
+The launcher uses the main checkout as the production-like local profile. Running the same command from a Git worktree starts an isolated development profile with its own port, `ROOK_HOME/rook.sqlite` application database, profile-scoped capability workspaces under `ROOK_HOME/global-workspace/` and `ROOK_HOME/agent-workspaces/`, `~/.rook-<worktree-slug>` state directory, logs, and Mac app identity. The slug includes a short hash of the canonical worktree path so same-named worktrees remain distinct. Development profiles are initially seeded by copying `~/.rook` into their profile home when it does not exist, including the application database so the development profile starts with the same sessions and durable local state. After that, runtime configuration, application database, capability workspace, and session/server state remain isolated; the personal environment repository remains shared unless `ROOK_PERSONAL_ENVIRONMENT_REPOSITORY_DB` is overridden. The main checkout likewise defaults its application database to `~/.rook/rook.sqlite`. Use `ROOK_RUN_MODE` or `ROOK_PRODUCTION_ROOT` for explicit profile selection, and `RUN_ROOK_HOME` / `RUN_ROOK_DATABASE_PATH` for launcher-specific overrides.
 - `npm run test:launcher` — run hermetic worktree-profile and launcher-lifecycle tests
 - `./scripts/print-environments.sh` — dump active/recent environment diagnostics from the server
 - `./scripts/tail-logs.sh` — inspect provider-payload traces in `/tmp/pi/provider-payload.jsonl` (use `--instructions` and/or `--tools` for structured output)
@@ -42,8 +41,8 @@ The launcher uses the main checkout as the production-like local profile. Runnin
 
 ## High-level docs map
 
-- setup, `.env`, binding, and remote-access notes: [docs/setup.md](docs/setup.md)
-- agent-profile config: [docs/configuration.md](docs/configuration.md)
+- setup, `.env`, binding, and remote-access examples: [.env.example](.env.example) and [server/README.md](server/README.md)
+- agent-profile config: `~/.rook/config/agent-runtimes.json` (validated in `server/src/infrastructure/config/agentRuntimes.ts`)
 - as-built architecture index: [AS-BUILT-ARCHITECTURE/](AS-BUILT-ARCHITECTURE/)
 - server package details: [server/README.md](server/README.md)
 - shared environment workspace design/review: [CHANGES/2026-08-01-environment_repo_to_db/part_b/](CHANGES/2026-08-01-environment_repo_to_db/part_b/)

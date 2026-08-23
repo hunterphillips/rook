@@ -19,8 +19,16 @@ The Android client is a native Kotlin + Jetpack Compose app that mirrors the iPh
   - process-wide location/presence controller shared by UI and services
 - `MovementService`
   - long-lived foreground service using GPS + accelerometer + activity recognition to infer arrivals
+- `RecordingService`
+  - optional foreground data-collection service that writes synchronized accelerometer/GPS CSV recordings to `Downloads/Rook`
+- `RookPresenceService`
+  - persistent process-alive foreground notification independent of location/recording state
+- `LocationSource`
+  - selects Google Play Services fused location or an AOSP `LocationManager` fallback
 - `PlaceStore`
   - persisted place/suggestion state
+- `net/AuthTokenStore`
+  - Android Keystore-backed encrypted bearer-token storage
 - Compose UI screens
   - agent picker, chat, settings, places, environments, environment offer sheet
 
@@ -35,7 +43,10 @@ The Android client is a native Kotlin + Jetpack Compose app that mirrors the iPh
 - fused or fallback location source
 - accelerometer sampling
 - optional activity-recognition automotive signal
-- shared preferences / encrypted auth token storage
+- Google Play Services fused location with an AOSP `LocationManager` fallback
+- persistent presence and movement foreground services
+- optional synchronized sensor/GPS recording to public Downloads
+- plain shared preferences for non-sensitive settings and Android Keystore-backed encrypted auth token storage
 
 ## Core data schemas
 
@@ -44,6 +55,7 @@ StateFlows for:
 - server state
 - agents and sessions
 - current session and chat visibility
+- pinned/recent session organization and session-management state
 - `blocks: List<ChatBlock>`
 - queued messages
 - environment offers and environment list items
@@ -73,8 +85,9 @@ Android defines Kotlin equivalents of the Swift shared models:
 ### App startup
 1. `MainActivity` creates or reuses the singleton `LocationController`
 2. optional server-url and simulated-arrival intent extras are applied
-3. `RookApp` creates the `RookViewModel`
-4. `viewModel.start()` wires socket collectors, location callbacks, and periodic health refresh
+3. `LocationController` starts `RookPresenceService`, which keeps a persistent Rook notification independent of location tracking
+4. `RookApp` creates the `RookViewModel`
+5. `viewModel.start()` wires socket collectors, location callbacks, and periodic health refresh
 
 ### Chat flow
 1. `RookViewModel` opens an unbound ACP socket only for `session/new`, then the server binds it to the created session
@@ -83,6 +96,7 @@ Android defines Kotlin equivalents of the Swift shared models:
 4. `AcpSocket` reduces standard WebSocket ACP frames into `AcpClientEvent`
 5. `RookViewModel` turns those events into `ChatBlock` lists and run state
 6. reconnect logic reopens the session-bound socket, reloads the session through ACP to replace cached blocks, and flushes queued prompts
+7. session rows support rename, delete, and pin/unpin through REST; the API client also exposes the server's pinned-order endpoint
 
 ### Place registration flow
 1. region-like place state comes from `MovementService` checking current location against saved places
@@ -97,6 +111,12 @@ Android defines Kotlin equivalents of the Swift shared models:
 4. on transition into stationary, the service builds an arrival context
 5. if UI is bound, `RookViewModel` posts `register-location`
 6. if app is headless, the service posts `register-location` directly using persisted server credentials
+
+### Sensor recording flow
+1. an explicit recording action starts `RecordingService` as a location foreground service
+2. `LocationSource` records GPS and a background sensor thread records accelerometer samples on the same elapsed-realtime clock
+3. the service periodically flushes a combined CSV to `Downloads/Rook` and clears the MediaStore pending flag
+4. stopping the service closes the file and clears recording state; recordings are diagnostic/classifier-training data, not normal arrival state
 
 ### Environment offer flow
 1. server emits `_com.rookkeeper/environment_offer`
