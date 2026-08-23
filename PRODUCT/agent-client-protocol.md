@@ -20,13 +20,13 @@ The server maps public session ids to runtime-local ACP session ids and does not
 
 ## Environment integration
 
-Every configured runtime receives the base Rook identity prompt, including sessions with no entered environment. Environment-specific instructions are discovered from the generated `AGENTS.md` and `.agents/skills` files in the session workspace.
+Every configured runtime receives the base Rook identity prompt, including sessions with no entered environment. Environment-specific instructions and skills are discovered from the generated `AGENTS.md` and `.agents/skills` files in the session workspace. Separately, Rook provides concise environment lifecycle notices to the agent through prompt injection: when an environment is available, when the session enters it, and when its active environment context changes. These notices communicate scoped context and state; they do not replace the file-backed capability projection.
 
 Standard ACP image content blocks are used for image-bearing prompts when the selected runtime advertises image support. Ordered text/image content is sent as ACP prompt blocks in the same sequence the user composed it. Rook does not turn Mac temporary file paths into a protocol-level attachment reference.
 
 ACP explicitly supports product-specific extensions in two ways:
 
-Environment changes are Rook orchestration around ACP:
+Environment changes are Rook orchestration around ACP. They also produce a lifecycle notice for the agent when the available or entered environment context changes.
 
 1. resolve approved/personal bundles from active capability memberships
 2. update shared writable environment sources and per-session links
