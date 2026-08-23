@@ -1,6 +1,6 @@
 # Rook CLI
 
-A tiny ACP-first command-line client for the real Rook server.
+A tiny ACP-first command-line client for the real Rook server. See the [CLI as-built architecture note](../../AS-BUILT-ARCHITECTURE/cli.md) for its transport and command-flow design.
 
 It creates a new session for one configured runtime, keeps the same ACP WebSocket after `session/new`, and prints events as they arrive. Existing sessions use REST discovery followed by requester-private ACP `session/load` replay on a session-bound WebSocket.
 

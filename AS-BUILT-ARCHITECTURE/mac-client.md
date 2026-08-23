@@ -116,7 +116,7 @@ Via `RookKit`:
 6. resumed handles open a dedicated session-bound WebSocket (`/api/ws?sessionId=...`) and run `initialize`
 7. the handle reduces `AcpClientEvent`s into `ChatBlock`s, tool states, plan state, permissions, and run lifecycle
 8. switching sessions changes which handle the UI observes — background sessions keep their WebSocket and continue running
-9. session rows expose rename/delete management actions that call the REST session-management routes without stealing the primary click-to-resume interaction
+9. session rows expose rename/delete/pin management actions and pinned drag-reordering through the REST session-management routes without stealing the primary click-to-resume interaction
 10. queued messages, including image attachments, are delivered automatically once the agent goes idle
 
 ### Foreground environment detection

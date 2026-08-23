@@ -1,6 +1,6 @@
 # Rook server
 
-Fastify API and runtime orchestration for the Rook native clients and CLI tooling. Part of the [Rook](../README.md) monorepo. Product/architecture notes: [PRODUCT/](../PRODUCT/). Repo-level setup, `.env`, binding, and auth live in [docs/setup.md](../docs/setup.md).
+Fastify API and runtime orchestration for the Rook native clients and CLI tooling. Part of the [Rook](../README.md) monorepo. Product and architecture notes live in [PRODUCT/](../PRODUCT/) and [AS-BUILT-ARCHITECTURE/](../AS-BUILT-ARCHITECTURE/). Repo-level environment/auth examples are in [.env.example](../.env.example).
 
 ## Quick start
 
@@ -21,17 +21,17 @@ That starts the backend on `http://127.0.0.1:7665` from the main checkout. When 
 
 ## Local profiles and state
 
-The launcher exports `ROOK_HOME` and `ROOK_DATABASE_PATH` for the selected profile. The main checkout keeps the existing defaults (`~/.rook/` for user-local state and `~/.rook/rook.sqlite` for the application database). A worktree defaults to `~/.rook-<worktree-slug>/rook.sqlite` and uses the worktree's canonical `environment-repository/` directory. The slug includes a short hash of the canonical worktree path.
+The launcher exports `ROOK_HOME` and `ROOK_DATABASE_PATH` for the selected profile. The main checkout keeps the existing defaults (`~/.rook/` for user-local state and `~/.rook/rook.sqlite` for the application database). A worktree defaults to `~/.rook-<worktree-slug>/rook.sqlite` and uses the worktree's canonical `environment-repository.db` file. The slug includes a short hash of the canonical worktree path.
 
-The server's user-local repository, environment-authoring bindings, and application database honor `ROOK_HOME`. Worktree slugs include a short path hash, so same-named worktrees receive separate homes. When the profile home does not exist, the launcher seeds it by copying `~/.rook`, including the application database, so the development profile starts with the same sessions and durable local state; subsequent configuration changes are isolated. `ROOK_AGENT_RUNTIMES_PATH` remains available as an explicit override. When starting the server through `run-rook.sh`, use `RUN_ROOK_HOME` / `RUN_ROOK_DATABASE_PATH` rather than ambient `ROOK_HOME` / `ROOK_DATABASE_PATH` to override the selected profile paths. The environment-repository API and bundle layout are unchanged.
+The runtime configuration, application database, capability workspaces, and environment-authoring bindings honor `ROOK_HOME`. The personal environment repository database remains a separate source and defaults to `~/.rook/environment-repository.db`; set `ROOK_PERSONAL_ENVIRONMENT_REPOSITORY_DB` to isolate it for a profile. Worktree slugs include a short path hash, so same-named worktrees receive separate homes. When the profile home does not exist, the launcher seeds it by copying `~/.rook`, including the application database, so the development profile starts with the same sessions and durable local state; subsequent configuration changes are isolated. `ROOK_AGENT_RUNTIMES_PATH` remains available as an explicit override. When starting the server through `run-rook.sh`, use `RUN_ROOK_HOME` / `RUN_ROOK_DATABASE_PATH` rather than ambient `ROOK_HOME` / `ROOK_DATABASE_PATH` to override the selected profile paths. The environment-repository API and bundle layout are unchanged.
 
 ## Network binding and auth
 
-The server binds loopback (`127.0.0.1`) by default. For remote phone access, set `ROOK_BIND_IP` to add a second listener. When `ROOK_AUTH_TOKEN` is configured, every HTTP + WebSocket client — including localhost — must send it. See [docs/setup.md](../docs/setup.md).
+The server binds loopback (`127.0.0.1`) by default. For remote phone access, set `ROOK_BIND_IP` to add a second listener. When `ROOK_AUTH_TOKEN` is configured, every HTTP + WebSocket client — including localhost — must send it. See [.env.example](../.env.example) and the launcher examples in the root [README](../README.md).
 
 ## Runtime configuration
 
-Rook loads configured runtimes from `~/.rook/config/agent-runtimes.json`. See `../docs/configuration.md`.
+Rook loads configured runtimes from `~/.rook/config/agent-runtimes.json`; the schema is validated by `src/infrastructure/config/agentRuntimes.ts`.
 
 Default example:
 
@@ -43,7 +43,7 @@ Default example:
 }
 ```
 
-A `MockAcpAgent` is configured for fast CLI-driven testing — it keeps agent history in memory, replays it on `session/load`, and handles common prompt patterns.
+A `MockAcpAgent` is configured for fast CLI-driven testing — it keeps agent history in memory, replays it on `session/load`, and handles common prompt patterns. The standalone CLI architecture is documented in [../AS-BUILT-ARCHITECTURE/cli.md](../AS-BUILT-ARCHITECTURE/cli.md).
 
 ## Architecture
 
