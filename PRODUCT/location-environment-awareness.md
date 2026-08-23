@@ -1,6 +1,6 @@
 # Location environment awareness
 
-Status: implemented. This feature turns a settled physical arrival into available `location:` environments that Rook can review and enter.
+This feature turns a settled physical arrival into available `location:` environments that Rook can review and enter.
 
 ## What it does
 
@@ -19,7 +19,7 @@ Location environments use the same repository/bundle model as web, app, and proj
 
 ## Dwell tuning
 
-The server uses a minimum dwell/stationary policy (`MIN_DWELL_SECONDS = 30`, `STATIONARY_SPEED_MPS = 1.5`) with permissive behavior when no motion signal is available. iPhone motion checks are opt-in; the server still applies its own context gate.
+The server uses a minimum dwell/stationary policy (`MIN_DWELL_SECONDS = 30`, `STATIONARY_SPEED_MPS = 1.5`) and requires an explicit stationary, dwell, or slow-motion signal before registering a location. iPhone motion checks are opt-in, but the server still rejects requests with no usable arrival signal.
 
 ## Follow-up work
 

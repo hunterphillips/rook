@@ -39,4 +39,4 @@ The runtime is restarted for environment changes only after the existing ACP ses
 
 ## Narrow environment bridge
 
-The long-term interaction model is that skills describe narrow environment operations rather than granting arbitrary environment access. The current migration does not implement a universal `interact_with_environment` tool; the Mac bridge and other platform mechanisms remain separate runtime/client features. MCP lifecycle and a stronger capability permission model are future work.
+The long-term interaction model is that skills describe narrow environment operations rather than granting arbitrary environment access. The current product does not implement a universal `interact_with_environment` tool; the Mac bridge and other platform mechanisms remain separate runtime/client features. MCP lifecycle and a stronger capability permission model are future work.

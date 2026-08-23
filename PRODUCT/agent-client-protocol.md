@@ -5,13 +5,13 @@ Rook uses [Agent Client Protocol (ACP)](https://agentclientprotocol.com/get-star
 ## Protocol shape
 
 ```text
-Mac/iPhone/Android client
+Mac/iPhone/Android/CLI client
         │ REST + ACP WebSocket
         ▼
 Fastify Rook server
         │ ACP over stdio
         ▼
-one runtime subprocess per public session
+one owned runtime process group per public session
 ```
 
 Client interaction uses a session-bound WebSocket at `/api/ws?sessionId=...` plus REST for health, session listing, session rename/delete/view-touch management, environment previews, registration, and decisions. An unbound socket can create a session and becomes bound to it. Session history is populated exclusively through requester-private ACP `session/load` replay.
@@ -20,7 +20,7 @@ The server maps public session ids to runtime-local ACP session ids and does not
 
 ## Environment integration
 
-Every configured runtime receives the base Rook identity prompt, including sessions with no entered environment. Environment-specific instructions are added later through the same runtime configuration.
+Every configured runtime receives the base Rook identity prompt, including sessions with no entered environment. Environment-specific instructions are discovered from the generated `AGENTS.md` and `.agents/skills` files in the session workspace.
 
 Standard ACP image content blocks are used for image-bearing prompts when the selected runtime advertises image support. Ordered text/image content is sent as ACP prompt blocks in the same sequence the user composed it. Rook does not turn Mac temporary file paths into a protocol-level attachment reference.
 
@@ -33,7 +33,7 @@ Environment changes are Rook orchestration around ACP:
 3. generate the read-only aggregate `AGENTS.md`
 4. replace the affected runtime with the agent workspace as cwd
 5. load the existing runtime session successfully
-6. retire the old subprocess
+6. retire the previous subprocess
 
 The runtime receives files and paths, not repository/database handles. Personal source edits are watched and persisted to SQLite; project edits remain direct project-file changes. For Pi, Rook starts the generated workspace with one-run project approval so non-interactive ACP startup loads the standard `.agents/skills` project resources; this is separate from Rook's bundle approval decisions.
 
@@ -41,7 +41,7 @@ The runtime receives files and paths, not repository/database handles. Personal 
 
 Rook uses ACP extension points for product-specific messages, including environment offers and their resolutions. Custom methods use `_`-prefixed names and carry Rook-specific semantics; standard ACP methods remain the runtime contract.
 
-Provider-specific behavior belongs inside the runtime adapter. Clients observe semantic session/environment events rather than knowing whether the subprocess is Pi, Claude, Cursor, or another ACP runtime. The server bounds ACP startup/load and cancellation waits. Prompt liveness uses a one-minute inactivity window reset by each runtime stream update, so a turn may run longer while it continues making progress. If a prompt or cancellation cannot settle, the server force-terminates the complete runtime process group, clears the in-flight turn, and reports an error instead of leaving the session Active indefinitely. A later client request starts one replacement runtime, privately restores the persisted ACP session with `session/load`, discards the replay before subscriber attachment, and then forwards the new prompt without replaying the interrupted prompt.
+Provider-specific behavior belongs inside the runtime adapter. Clients observe semantic session/environment events rather than knowing whether the subprocess is Pi, Claude, Cursor, or another ACP runtime. The server bounds ACP startup/load and cancellation waits. Prompt liveness uses a one-minute inactivity window reset by each runtime stream update, so a turn may run longer while it continues making progress. If a prompt or cancellation cannot settle, the server force-terminates the complete runtime process group, clears the in-flight turn, and reports an error instead of leaving the session Active indefinitely. A later client request starts one replacement runtime, privately restores the persisted ACP session with `session/load`, discards the replay before subscriber attachment, and then forwards the new prompt without replaying the interrupted prompt. If `session/load` returns an ACP response error during environment replacement, Rook retries with `session/new`; startup, transport, timeout, and malformed-load-response failures abort the replacement.
 
 ## Runtime safety
 

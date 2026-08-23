@@ -60,10 +60,10 @@ Session links point directly to these files. Project edits remain project edits.
 
 ## Safety boundaries
 
-- [ ] Canonical and external projections remain read-only.
-- [ ] Non-writable skills must not be changed or made writable.
-- [ ] The generated aggregate must not be edited directly.
-- [ ] Deleting a writable authoring source affects only that bundle membership.
-- [ ] A deleted membership can be restored without losing its capability file map.
+- Canonical and external projections remain read-only.
+- Non-writable skills must not be changed or made writable.
+- The generated aggregate must not be edited directly.
+- Deleting a writable authoring source affects only that bundle membership.
+- A deleted membership can be restored without losing its capability file map.
 
 Filesystem permissions are not a strong security boundary against an agent with arbitrary same-user shell access. Stronger OS-level isolation remains future work.
