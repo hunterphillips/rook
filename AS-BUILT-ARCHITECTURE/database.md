@@ -6,8 +6,8 @@ Rook's durable server state is split across SQLite databases:
 
 - the application database stores sessions, session membership, and durable environment decisions;
 - the canonical environment repository database stores curated environment/capability content;
-- the personal environment repository database stores writable user content;
-- the web environment repository database stores capabilities scouted from websites plus per-host scout state.
+- the user-local environment repository database stores both writable personal content and
+  website-scouted content, separated by a repository discriminator.
 
 The application database remains separate from environment repositories. This database is intentionally small: it stores session persistence, session membership, and durable environment decisions. Runtime processes, ACP session history, active/recent environment caches, subscribers, and workspace projections remain outside this database. By default it lives under `ROOK_HOME/rook.sqlite` (`~/.rook/rook.sqlite` for the main checkout and `~/.rook-<worktree-slug>/rook.sqlite` for development worktrees), with `ROOK_DATABASE_PATH` as an explicit override.
 
@@ -15,14 +15,20 @@ For session recency, the existing `sessions.updated_at` field represents both pr
 
 ## Environment repository schema
 
-Every environment repository database has the same three tables. The web repository database adds two scout-state tables, described below.
+Every environment repository database has the same three tables. The user-local database is
+shared by the `personal` and `web` repository projections.
 
 ### `environments`
 
-- `environment_id TEXT PRIMARY KEY` — canonical environment identifier.
+- `environment_id TEXT NOT NULL` — canonical environment identifier.
+- `repository TEXT NOT NULL DEFAULT 'personal'` — logical repository owner. Existing
+  user-local rows receive `personal` when this column is added.
 - `display_name TEXT NOT NULL` — UI name.
 - `description TEXT NOT NULL` — environment description.
 - `metadata_json TEXT NOT NULL DEFAULT '{}'` — serialized discovery metadata.
+
+Primary key: `(repository, environment_id)`. This permits personal and web content for
+the same logical website to coexist in the shared file.
 
 ### `capabilities`
 
@@ -39,7 +45,9 @@ A skill stores all of its files, including `SKILL.md`, scripts, references, and 
 The bundle table is the environment/capability membership table:
 
 - `bundle_id TEXT NOT NULL` — UUID grouping one atomic bundle.
-- `environment_id TEXT NOT NULL` — owning environment, foreign key to `environments`.
+- `environment_id TEXT NOT NULL` — owning environment identifier.
+- `repository TEXT NOT NULL DEFAULT 'personal'` — repository owner, paired with the
+  environment id for the cascading foreign key.
 - `capability_id TEXT NOT NULL` — referenced capability, foreign key to `capabilities`.
 - `publisher TEXT NOT NULL DEFAULT 'default'` — publisher metadata.
 - `deleted_at TEXT NULL` — membership tombstone; a timestamp means the capability is deleted from this bundle/environment.
@@ -47,25 +55,29 @@ The bundle table is the environment/capability membership table:
 Primary key:
 
 ```text
-(bundle_id, capability_id)
+(repository, bundle_id, capability_id)
 ```
 
 A capability can be referenced by memberships in multiple environments. Deleting one membership does not delete shared capability content. There are no revision tables, revision pointers, or persistent empty personal bundles.
 
 ### Web repository scout state
 
-The web repository database lives at `<ROOK_HOME>/web-environment-repository.db` (`ROOK_WEB_ENVIRONMENT_REPOSITORY_DB` overrides it) and adds:
-
-- `web_scouts(host PRIMARY KEY, fetched_at, status, errors_json)` — one row per scouted host; `status` is `content`, `empty`, or `error`; `errors_json` holds the scout's `RepositoryReadError` list.
-- `web_scout_resources(host, resource, etag, last_modified)` — HTTP validators per fetched resource (`llms.txt`, `AGENTS.md`, `skills-index`), keyed `(host, resource)`, cascading on host delete.
-
-Content rows use the three shared tables: one environment per host, one bundle (`site`, publisher = host) per environment. An `empty` host keeps its `web_scouts` row and no environment row; an `error` scout leaves previous content and validators in place. `WebEnvironmentRepository.recordScout` is the only writer.
+The web repository shares the personal repository's user-local
+`<ROOK_HOME>/environment-repository.db`. One `environments` row per scouted host stores
+`fetched_at`, `status`, pass `errors`, and per-resource `etag` / `last_modified` validators
+under `metadata_json.scout`. Content uses one bundle (`site`, publisher = host) per
+environment. Empty and failed hosts keep their environment row for negative caching, but
+rows without live web bundle memberships are omitted from listings and search. An error
+scout leaves previous content and validators in place. `WebEnvironmentRepository.recordScout`
+is the only web writer.
 
 ## Repository layering
 
 - `EnvironmentRepositoryDatastore` owns the SQLite connection and three-table schema.
-- `SQLiteEnvironmentRepository` reads and writes normalized rows and projects them into the bundle-facing `EnvironmentBundle` model.
-- `WebEnvironmentRepository` extends the SQLite repository with the scout-state tables and a single transactional `recordScout` writer; the inherited write paths are disabled.
+- `SQLiteEnvironmentRepository` scopes normalized rows by `repository`, reads and writes
+  them, and projects them into the bundle-facing `EnvironmentBundle` model.
+- `WebEnvironmentRepository` is a thin SQLite repository specialization for metadata-backed
+  scout state, host guards, read-only public writes, and transactional `recordScout` updates.
 - `CompositeEnvironmentRepository` combines canonical, personal, project-directory, synthetic, and web repositories, in that order.
 - `EnvironmentRepositoryService` resolves bundles, calculates atomic bundle hashes, exposes search/preview, and routes capability write/delete/restore operations.
 

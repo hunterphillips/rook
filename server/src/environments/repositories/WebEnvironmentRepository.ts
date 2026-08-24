@@ -1,6 +1,4 @@
-import path from "node:path";
-import type { EnvironmentBundle, EnvironmentBundleResult, RepositoryReadError } from "../../shared/environmentRepository.js";
-import { getRookHomeDir } from "../../infrastructure/config/configPaths.js";
+import type { EnvironmentBundle, EnvironmentBundleResult, EnvironmentRecord, RepositoryReadError } from "../../shared/environmentRepository.js";
 import type { EnvironmentRepositoryDatastore } from "../datastores/EnvironmentRepositoryDatastore.js";
 import { SQLiteEnvironmentRepository } from "./SQLiteEnvironmentRepository.js";
 
@@ -13,30 +11,13 @@ import { SQLiteEnvironmentRepository } from "./SQLiteEnvironmentRepository.js";
  * writers throw, and `replaceCapabilityFiles` and friends stay no-ops because the base
  * class only honours them for the `personal` repository.
  *
- * Storage reuses the standard `environments`/`capabilities`/`bundles` schema and adds
- * per-host scout bookkeeping (`web_scouts`, `web_scout_resources`). Hosts scouted with
- * nothing found keep a `web_scouts` row but no `environments` row, so `listEnvironments`
- * and `searchBundles` (inherited unchanged) only ever surface hosts that have content.
+ * Storage reuses the personal repository datastore. Per-host scout bookkeeping lives in
+ * the web environment row's `metadata_json`; contentless rows remain available for TTL
+ * checks but are excluded from discovery and search.
  */
 export class WebEnvironmentRepository extends SQLiteEnvironmentRepository {
-  constructor(datastore: EnvironmentRepositoryDatastore | string = defaultWebEnvironmentRepositoryPath()) {
+  constructor(datastore: EnvironmentRepositoryDatastore | string) {
     super(datastore, "web");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS web_scouts (
-        host TEXT PRIMARY KEY,
-        fetched_at TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('content', 'empty', 'error')),
-        errors_json TEXT NOT NULL DEFAULT '[]'
-      );
-
-      CREATE TABLE IF NOT EXISTS web_scout_resources (
-        host TEXT NOT NULL REFERENCES web_scouts(host) ON DELETE CASCADE,
-        resource TEXT NOT NULL,
-        etag TEXT,
-        last_modified TEXT,
-        PRIMARY KEY (host, resource)
-      );
-    `);
   }
 
   override async getBundles(environmentId: string): Promise<EnvironmentBundleResult> {
@@ -56,6 +37,17 @@ export class WebEnvironmentRepository extends SQLiteEnvironmentRepository {
     return result;
   }
 
+  override async listEnvironments(): Promise<EnvironmentRecord[]> {
+    const environments = await super.listEnvironments();
+    const rows = this.db.prepare(`
+      SELECT DISTINCT environment_id
+      FROM bundles
+      WHERE repository = ? AND deleted_at IS NULL
+    `).all(this.repositoryId) as Array<{ environment_id: string }>;
+    const withContent = new Set(rows.map((row) => row.environment_id));
+    return environments.filter((environment) => withContent.has(environment.id));
+  }
+
   /** Never writable: web content only enters through `recordScout`. */
   override saveResult(): never {
     throw new Error("web content is written through recordScout");
@@ -69,19 +61,10 @@ export class WebEnvironmentRepository extends SQLiteEnvironmentRepository {
   getScoutState(host: string): WebScoutState | null {
     const normalized = normalizeHost(host);
     if (!normalized) return null;
-    const row = this.db.prepare("SELECT host, fetched_at, status, errors_json FROM web_scouts WHERE host = ?")
-      .get(normalized) as { host: string; fetched_at: string; status: WebScoutStatus; errors_json: string } | undefined;
+    const row = this.db.prepare("SELECT metadata_json FROM environments WHERE repository = ? AND environment_id = ?")
+      .get(this.repositoryId, webEnvironmentIdForHost(normalized)) as { metadata_json: string } | undefined;
     if (!row) return null;
-    const validators: Record<string, WebScoutValidators> = {};
-    const resourceRows = this.db.prepare("SELECT resource, etag, last_modified FROM web_scout_resources WHERE host = ? ORDER BY resource")
-      .all(normalized) as Array<{ resource: string; etag: string | null; last_modified: string | null }>;
-    for (const resource of resourceRows) {
-      validators[resource.resource] = {
-        ...(resource.etag === null ? {} : { etag: resource.etag }),
-        ...(resource.last_modified === null ? {} : { lastModified: resource.last_modified }),
-      };
-    }
-    return { host: row.host, fetchedAt: row.fetched_at, status: row.status, validators, errors: parseErrors(row.errors_json) };
+    return scoutStateFromMetadata(normalized, parseMetadata(row.metadata_json));
   }
 
   /**
@@ -106,8 +89,8 @@ export class WebEnvironmentRepository extends SQLiteEnvironmentRepository {
    * - `content` with `bundle: null`: everything revalidated (304s), so the stored bundle
    *   rows are kept exactly as they are; only the timestamp, validators, and errors move.
    *   Throws when nothing is stored, since there would be nothing to keep.
-   * - `empty`: durable knowledge that the site offers nothing — bundle rows, the
-   *   environments row, orphaned capabilities, and the old validators are all dropped.
+   * - `empty`: durable knowledge that the site offers nothing — bundle rows, orphaned
+   *   capabilities, and old validators are dropped, while metadata keeps the negative row.
    * - `error`: not knowledge at all, just a failed look. Only the timestamp, status, and
    *   errors are touched; the previous content and validators survive so the next pass can
    *   still revalidate them, and `changed` is always false.
@@ -125,7 +108,6 @@ export class WebEnvironmentRepository extends SQLiteEnvironmentRepository {
     if (input.bundle && (input.bundle.environmentId !== environmentId || input.bundle.bundleId !== WEB_BUNDLE_ID)) {
       throw new Error(`Web scout bundle must be ${environmentId}#${WEB_BUNDLE_ID}, got ${input.bundle.environmentId}#${input.bundle.bundleId}`);
     }
-    const errorsJson = JSON.stringify(input.errors ?? []);
 
     this.db.exec("BEGIN");
     try {
@@ -133,25 +115,19 @@ export class WebEnvironmentRepository extends SQLiteEnvironmentRepository {
       if (input.status === "content" && !input.bundle && !before) {
         throw new Error(`Web scout status 'content' requires a bundle for ${environmentId} when nothing is stored`);
       }
-      this.db.prepare(`
-        INSERT INTO web_scouts (host, fetched_at, status, errors_json) VALUES (?, ?, ?, ?)
-        ON CONFLICT(host) DO UPDATE SET
-          fetched_at = excluded.fetched_at, status = excluded.status, errors_json = excluded.errors_json
-      `).run(host, input.fetchedAt, input.status, errorsJson);
-      if (input.status !== "error") {
-        this.db.prepare("DELETE FROM web_scout_resources WHERE host = ?").run(host);
-        for (const [resource, validators] of Object.entries(input.validators)) {
-          this.db.prepare("INSERT INTO web_scout_resources (host, resource, etag, last_modified) VALUES (?, ?, ?, ?)")
-            .run(host, resource, validators.etag ?? null, validators.lastModified ?? null);
-        }
-      }
+      const existingMetadata = this.environmentMetadata(environmentId);
+      const existingState = scoutStateFromMetadata(host, existingMetadata);
+      const validators = input.status === "error" ? existingState?.validators ?? {} : input.validators;
+      const metadata = {
+        ...existingMetadata,
+        scout: serializeScoutState(input.fetchedAt, input.status, validators, input.errors ?? []),
+      };
+      this.upsertEnvironment({ id: environmentId, displayName: host, description: `Website ${host}`, metadata });
       if (input.bundle) {
-        this.upsertEnvironment({ id: environmentId, displayName: host, description: `Website ${host}`, metadata: {} });
         this.writeBundle(input.bundle, WEB_BUNDLE_ID, host);
         this.deleteOrphanedCapabilities();
       } else if (input.status === "empty") {
-        this.db.prepare("DELETE FROM bundles WHERE environment_id = ?").run(environmentId);
-        this.db.prepare("DELETE FROM environments WHERE environment_id = ?").run(environmentId);
+        this.db.prepare("DELETE FROM bundles WHERE repository = ? AND environment_id = ?").run(this.repositoryId, environmentId);
         this.deleteOrphanedCapabilities();
       }
       const after = this.bundleFingerprint(environmentId);
@@ -168,20 +144,21 @@ export class WebEnvironmentRepository extends SQLiteEnvironmentRepository {
     const rows = this.db.prepare(`
       SELECT b.bundle_id, c.type, c.name, c.content_hash
       FROM bundles b JOIN capabilities c ON c.capability_id = b.capability_id
-      WHERE b.environment_id = ? AND b.deleted_at IS NULL
+      WHERE b.repository = ? AND b.environment_id = ? AND b.deleted_at IS NULL
       ORDER BY b.bundle_id, c.type, c.name, c.content_hash
-    `).all(environmentId) as Array<{ bundle_id: string; type: string; name: string; content_hash: string }>;
+    `).all(this.repositoryId, environmentId) as Array<{ bundle_id: string; type: string; name: string; content_hash: string }>;
     return rows.map((row) => `${row.bundle_id}\u0000${row.type}\u0000${row.name}\u0000${row.content_hash}`).join("\u0001");
+  }
+
+  private environmentMetadata(environmentId: string): Record<string, unknown> {
+    const row = this.db.prepare("SELECT metadata_json FROM environments WHERE repository = ? AND environment_id = ?")
+      .get(this.repositoryId, environmentId) as { metadata_json: string } | undefined;
+    return parseMetadata(row?.metadata_json);
   }
 }
 
 /** The single synthesized bundle id every scouted host publishes under. */
 export const WEB_BUNDLE_ID = "site";
-
-/** Where a server-owned web repository lives when no explicit location is configured. */
-export function defaultWebEnvironmentRepositoryPath(): string {
-  return path.join(getRookHomeDir(), "web-environment-repository.db");
-}
 
 export type WebScoutStatus = "content" | "empty" | "error";
 
@@ -243,11 +220,59 @@ export function hostForWebEnvironmentId(environmentId: string): string | null {
   return normalizeHost(environmentId.slice("web:".length));
 }
 
-function parseErrors(json: string): RepositoryReadError[] {
+function parseMetadata(json: unknown): Record<string, unknown> {
+  if (typeof json !== "string") return {};
   try {
     const parsed = JSON.parse(json) as unknown;
-    return Array.isArray(parsed) ? (parsed as RepositoryReadError[]) : [];
+    return isRecord(parsed) ? parsed : {};
   } catch {
-    return [];
+    return {};
   }
+}
+
+function scoutStateFromMetadata(host: string, metadata: Record<string, unknown>): WebScoutState | null {
+  const scout = metadata.scout;
+  if (!isRecord(scout) || typeof scout.fetched_at !== "string" || !isWebScoutStatus(scout.status)) return null;
+  const validators: Record<string, WebScoutValidators> = {};
+  if (isRecord(scout.validators)) {
+    for (const [resource, value] of Object.entries(scout.validators)) {
+      if (!isRecord(value)) continue;
+      const validator: WebScoutValidators = {};
+      if (typeof value.etag === "string") validator.etag = value.etag;
+      if (typeof value.last_modified === "string") validator.lastModified = value.last_modified;
+      validators[resource] = validator;
+    }
+  }
+  return {
+    host,
+    fetchedAt: scout.fetched_at,
+    status: scout.status,
+    validators,
+    errors: Array.isArray(scout.errors) ? scout.errors as RepositoryReadError[] : [],
+  };
+}
+
+function serializeScoutState(
+  fetchedAt: string,
+  status: WebScoutStatus,
+  validators: Record<string, WebScoutValidators>,
+  errors: RepositoryReadError[],
+): Record<string, unknown> {
+  return {
+    fetched_at: fetchedAt,
+    status,
+    errors,
+    validators: Object.fromEntries(Object.entries(validators).map(([resource, value]) => [resource, {
+      ...(value.etag === undefined ? {} : { etag: value.etag }),
+      ...(value.lastModified === undefined ? {} : { last_modified: value.lastModified }),
+    }])),
+  };
+}
+
+function isWebScoutStatus(value: unknown): value is WebScoutStatus {
+  return value === "content" || value === "empty" || value === "error";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

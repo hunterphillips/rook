@@ -10,7 +10,8 @@ import { CompositeEnvironmentRepository } from "./environments/repositories/Comp
 import { SQLiteEnvironmentRepository } from "./environments/repositories/SQLiteEnvironmentRepository.js";
 import { ProjectDirectoryEnvironmentRepository } from "./environments/repositories/ProjectDirectoryEnvironmentRepository.js";
 import { LocationContextRepository } from "./environments/repositories/LocationContextRepository.js";
-import { defaultWebEnvironmentRepositoryPath, WebEnvironmentRepository } from "./environments/repositories/WebEnvironmentRepository.js";
+import { WebEnvironmentRepository } from "./environments/repositories/WebEnvironmentRepository.js";
+import { EnvironmentRepositoryDatastore } from "./environments/datastores/EnvironmentRepositoryDatastore.js";
 import { EnvironmentRepositoryService } from "./environments/services/EnvironmentRepositoryService.js";
 import { WebEnvironmentScout, type GuardedFetcher } from "./environments/services/WebEnvironmentScout.js";
 import { WebScoutTrigger } from "./environments/services/WebScoutTrigger.js";
@@ -58,8 +59,6 @@ export interface BuildServerOptions {
   environmentRepositoryDatabase?: string;
   /** Optional user-local environment repository database used with the canonical database. */
   personalEnvironmentRepositoryDatabase?: string;
-  /** Optional store of website capabilities scouted for `web:` environments. */
-  webEnvironmentRepositoryDatabase?: string;
   /**
    * Web scouting on `web:` candidate registration. `enabled` defaults to true unless
    * `ROOK_WEB_SCOUT_DISABLED=1`; disabling only stops new scouts, the repository still
@@ -101,10 +100,10 @@ export async function buildServer(options: BuildServerOptions = {}) {
   const locationContextRepository = new LocationContextRepository();
   const environmentRepositoryDatabase = options.environmentRepositoryDatabase ?? process.env.ROOK_ENVIRONMENT_REPOSITORY_DB ?? path.join(REPO_ROOT, "environment-repository.db");
   const personalEnvironmentRepositoryDatabase = options.personalEnvironmentRepositoryDatabase ?? process.env.ROOK_PERSONAL_ENVIRONMENT_REPOSITORY_DB ?? path.join(os.homedir(), ".rook", "environment-repository.db");
-  const webEnvironmentRepositoryDatabase = options.webEnvironmentRepositoryDatabase ?? process.env.ROOK_WEB_ENVIRONMENT_REPOSITORY_DB ?? defaultWebEnvironmentRepositoryPath();
   const canonicalEnvironmentRepository = new SQLiteEnvironmentRepository(environmentRepositoryDatabase, "canonical");
-  const personalEnvironmentRepository = new SQLiteEnvironmentRepository(personalEnvironmentRepositoryDatabase, "personal");
-  const webEnvironmentRepository = new WebEnvironmentRepository(webEnvironmentRepositoryDatabase);
+  const personalEnvironmentDatastore = new EnvironmentRepositoryDatastore(personalEnvironmentRepositoryDatabase);
+  const personalEnvironmentRepository = new SQLiteEnvironmentRepository(personalEnvironmentDatastore, "personal");
+  const webEnvironmentRepository = new WebEnvironmentRepository(personalEnvironmentDatastore);
   const environmentRepository = new CompositeEnvironmentRepository([
     canonicalEnvironmentRepository,
     personalEnvironmentRepository,
@@ -167,6 +166,7 @@ export async function buildServer(options: BuildServerOptions = {}) {
     canonicalEnvironmentRepository.close();
     personalEnvironmentRepository.close();
     webEnvironmentRepository.close();
+    personalEnvironmentDatastore.close();
     datastore.close();
   });
 

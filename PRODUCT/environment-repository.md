@@ -4,13 +4,11 @@ Rook's environment repository maps recognizable environments to capability bundl
 
 ## Storage model
 
-Every environment-repository SQLite database shares the same three tables:
+Environment-repository SQLite storage uses three tables:
 
-- `environments` — environment identity and display metadata.
+- `environments` — repository-scoped environment identity, display metadata, and source-specific metadata.
 - `capabilities` — reusable capability content and a content hash.
-- `bundles` — membership rows joining a bundle, environment, and capability.
-
-The web repository adds its own scout-state tables beside these three (see [Web repository](#web-repository)).
+- `bundles` — repository-scoped membership rows joining a bundle, environment, and capability.
 
 A capability is stored in one uniform nested file-map format. A skill stores its complete directory, including `SKILL.md`, scripts, references, and assets. `AGENTS.md`, `llms.txt`, facts, MCP content, and app content use the same representation.
 
@@ -18,7 +16,9 @@ Capabilities use UUID `TEXT` identifiers and may be referenced by bundle members
 
 `deleted_at` belongs to a bundle membership, not the shared capability row. Deleting a writable capability from one environment leaves the capability content available to other memberships. Restoration clears the membership timestamp.
 
-The canonical, personal, and web databases use the same schema but different repository instances:
+The canonical repository uses the checkout database. Personal and web repository instances
+share the user-local `environment-repository.db` and are isolated by the `repository`
+discriminator on environments and bundle memberships:
 
 - canonical content is read-only and externally curated;
 - personal content is writable and does not require approval;
@@ -107,6 +107,10 @@ When the user is on a `web:<host>` environment, Rook probes the site for the res
 The skills index follows Cloudflare's Agent Skills Discovery RFC (`$schema` `https://schemas.agentskills.io/discovery/0.2.0/schema.json`): a `skills` array of `{name, description, type, url, digest}`. Each `skill-md` entry's `url` is a single `SKILL.md`, which Rook fetches, verifies against the `sha256:` digest, and stores as `<name>/SKILL.md`. `archive` entries are recorded as unsupported; entries that fail validation or their digest are dropped and reported in the bundle's `errors`. Only the host root is probed; `web:<host>/<path>` environments are not scouted, and MCP discovery is not part of the web repository.
 
 Everything found for a host forms one bundle, `web:<host>#site`, with the host as publisher. A site that publishes nothing is remembered as empty so it is not probed again on every visit.
+Scout state (`fetched_at`, status, pass errors, and per-resource ETag/Last-Modified
+validators) is stored under `metadata_json.scout` on the web environment row. Empty and
+failed scouts therefore retain a negative-cache row without creating web-specific tables;
+contentless rows are omitted from environment listings and bundle search.
 
 ### When scouting happens
 

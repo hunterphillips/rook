@@ -8,13 +8,19 @@
 - [x] Record the agreed decision and TODO after the explicit decision gate
 - [x] Prepare the implementation workspace after the planning commit
 - [x] Implement and test
-- [x] Mark compatibility surfaces — none retained: all additions (new repository, new tables, new optional API fields); the only pre-existing type widened is `SQLiteEnvironmentRepository` (`db`, `writeBundle`, `upsertEnvironment`, `deleteOrphanedCapabilities` → `protected`) with no behavior change
+- [x] Mark compatibility surfaces — existing user-local environment and membership rows
+      are assigned to the personal repository during the repository-column migration;
+      the unmerged web store has no migration path.
 - [x] Maintain product and architecture documentation
-- [x] Run final validation — server typecheck (both configs) + 220 tests, RookKit 69 tests, Mac build + offer-controller tests; one pre-existing acpFacade flake reproduces on origin/main
+- [x] Run final validation — original pass: server typecheck (both configs) + 220 tests,
+      RookKit 69 tests, Mac build + offer-controller tests. Review-item pass: both server
+      typechecks and all 68 affected repository/scout/trigger tests pass; the full suite
+      passes 205 tests but the sandbox denies the ACP listener and times out three
+      filesystem-watcher tests on both attempts.
 - [x] Synchronize with main before submitting — origin/main unchanged at 0b6cdc8; branch is 0 behind. Re-synchronized with main 2026-08-21 (post PR #152 merge and transcript-store removal); conflicts were wiring/docs/tests only.
 - [x] Open and validate the PR — #159, mergeable
 - [x] Address review feedback round 1 (2026-08-24) — site-specific generated `llms.txt`
-      skills and raw-byte digest verification are complete; repository/database
-      consolidation follows next.
+      skills, raw-byte digest verification, and shared personal/web repository storage
+      with metadata-backed scout state are complete.
 - [ ] Merge with approval
 - [ ] Record outcomes and clean up

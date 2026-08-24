@@ -24,8 +24,8 @@ and a read-only repository that serves the result through the normal offer → a
   `<name>/SKILL.md`); `archive` entries and entries whose digest fails are skipped
   and reported in the bundle's `errors`. Path-scoped ids
   (`web:host/path`) are not scouted. MCP is out of scope (#3, #107).
-- **Shape.** New `WebEnvironmentRepository` (`repositoryId: "web"`, read-only, only
-  `getBundles`, `listEnvironments`, `searchBundles` implemented) serving from a persistent store filled
+- **Shape.** Thin `WebEnvironmentRepository` specialization (`repositoryId: "web"`,
+  read-only) serving from a persistent store filled
   by a `WebEnvironmentScout`. One synthesized bundle per host: `bundleId: "site"`,
   `id: "<envId>#site"`, `repository: "web"`, `publisher: <host>`, `editable` unset so
   materialization takes the read-only path. A host that was scouted and found
@@ -34,11 +34,10 @@ and a read-only repository that serves the result through the normal offer → a
 - **Trigger and persistence.** Scouting starts when a `web:` candidate is registered
   (`POST /api/environments/register`, already fire-and-forget). `getBundles` never does
   network I/O; it reads a **persistent SQLite store** so scouted capabilities survive
-  restarts and are available offline and to search. The store lives at
-  `<ROOK_HOME>/web-environment-repository.db` (profile-isolated via `getRookHomeDir()`),
-  uses the existing repository schema (`environments`/`capabilities`/`bundles`, written
-  through `SQLiteEnvironmentRepository`-style ingest) plus a `web_scouts` table per host:
-  `fetched_at`, `etag`/`last_modified` per resource, `last_status`. Refresh policy: on
+  restarts and are available offline and to search. Web rows share the personal
+  `<ROOK_HOME>/environment-repository.db`, with repository-scoped environment and bundle
+  rows. Per-host `fetched_at`, status, errors, and resource `etag`/`last_modified`
+  validators live under the web environment's `metadata_json.scout`. Refresh policy: on
   registration, if the host's entry is older than the TTL (default 24 h, env override)
   re-scout in the background using conditional requests (`If-None-Match` /
   `If-Modified-Since`); if content changed, replace the bundle rows (new hash → new
@@ -75,7 +74,7 @@ and a read-only repository that serves the result through the normal offer → a
   (what is probed, the adopted discovery convention, approval semantics, the privacy
   statement that Rook requests these three URLs from sites the user opens);
   `AS-BUILT-ARCHITECTURE/server.md`, `AS-BUILT-ARCHITECTURE/database.md`, and
-  `server/README.md` list the new repository, its database, and the egress helper;
+  `server/README.md` list the new repository, its shared storage, and the egress helper;
   `AS-BUILT-ARCHITECTURE/mac-client.md` notes the offer preview; the stale `.bundles` paths in
   `.agents/skills/debugging-rook/references/server-and-environment.md` are corrected.
 
@@ -84,10 +83,10 @@ and a read-only repository that serves the result through the normal offer → a
 - [x] `server/src/infrastructure/http/scoutFetch.ts` (name TBD in-code): the egress
       helper above, injectable `fetch`, typed result (`ok | absent | error`), unit tests
       for timeout, size cap, redirect limit, private-address refusal, HTTPS-only.
-- [x] Persistent store: `<ROOK_HOME>/web-environment-repository.db` opened through
-      the existing `EnvironmentRepositoryDatastore` schema plus a `web_scouts` table
-      (host, fetched_at, per-resource etag/last-modified, last_status); ingest/replace
-      bundle rows for a host; read side for `getBundles`; staleness query.
+- [x] Persistent store: the personal `<ROOK_HOME>/environment-repository.db` opened once
+      and shared by personal and web repository projections; discriminator-scoped
+      environments and memberships plus metadata-backed per-host scout state; ingest /
+      replace bundle rows for a host; read side for `getBundles`; staleness query.
 - [x] `WebEnvironmentScout` in `server/src/environments/`: given a host, fetch the
       three resources (conditional requests when the store has validators), parse the
       discovery index (schema check, field validation, `skill-md` only, digest
@@ -135,4 +134,8 @@ and a read-only repository that serves the result through the normal offer → a
 
 - [x] Give each generated `llms.txt` skill a meaningful, site-specific name and description.
 - [x] Verify published skill digests over the raw fetched bytes and improve mismatch diagnostics.
-- [ ] Consolidate the web repository/database implementation with the shared repository infrastructure; handled next.
+- [x] Consolidate the web repository/database implementation with the shared repository
+      infrastructure. Personal and web share one datastore; repository-scoped composite
+      environment keys allow both sources for the same website; scout state is stored in
+      `metadata_json`; contentless negative-cache rows are excluded from list/search; no
+      web-only tables, path, configuration override, or web-database migration remain.

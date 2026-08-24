@@ -24,12 +24,14 @@ The server is a Fastify service on `127.0.0.1:7665` for the main checkout, with 
 - `environments/services/EnvironmentRepositoryService`
   - resolves environment bundles from repo-backed repositories and canonical content hashes
 - `environments/repositories/SQLiteEnvironmentRepository`
-  - stores canonical and personal capability content and bundle memberships in separate SQLite repositories
+  - stores repository-scoped capability content and bundle memberships; personal and web
+    instances share one user-local datastore
 - `environments/repositories/ProjectDirectoryEnvironmentRepository`
   - reads project-owned `.agents/skills`, `AGENTS.md`, `CLAUDE.md`, and `.mcp.json` files in place
 - `environments/repositories/WebEnvironmentRepository`
-  - read-only `web` repository over its own SQLite database; serves the `web:<host>#site` bundle scouted for each host and never performs network I/O
-  - `recordScout` is the only writer; last in the composite repository
+  - thin read-only `web` specialization over the shared user-local datastore; serves the
+    `web:<host>#site` bundle and keeps scout state in the environment metadata
+  - `recordScout` is the only writer; no web-specific schema; last in the composite repository
 - `environments/services/WebEnvironmentScout` and `WebScoutTrigger`
   - the scout fetches `/llms.txt`, `/AGENTS.md`, and `/.well-known/agent-skills/index.json` (plus each listed `skill-md`) for one host through the guarded fetch helper, with per-host in-flight dedupe, a 24 h TTL (15 min after a failure), and conditional requests
   - the trigger runs after `POST /api/environments/register` for `web:<host>` candidates: scout, then re-register the candidate when the stored content changed so summaries and offers refresh
@@ -118,7 +120,7 @@ See also: [database.md](./database.md)
 
 ## Local profile configuration
 
-The launcher exports `ROOK_HOME` and `ROOK_DATABASE_PATH`. User-local configuration, the application database, and personal environment-repository bindings resolve under `ROOK_HOME`; the default is `~/.rook` for production and `~/.rook-<worktree-slug>` for a development worktree. The slug includes a short hash of the canonical worktree path, so same-named worktrees remain isolated. On first launch, development profiles seed `ROOK_HOME` by copying the production `~/.rook` directory, including the application database, so the development profile starts with the same sessions and durable local state; later launches leave the existing profile home unchanged. Runtime definitions, user configuration, personal environment-repository state, and other durable local state therefore become profile-specific. The default application database path is `ROOK_HOME/rook.sqlite`. `run-rook.sh` computes and exports `ROOK_HOME` / `ROOK_DATABASE_PATH` for the selected profile, so ambient values are not treated as launcher inputs; use `RUN_ROOK_HOME` / `RUN_ROOK_DATABASE_PATH` when an explicit launcher override is intended. `ROOK_AGENT_RUNTIMES_PATH` remains an explicit escape hatch. The canonical environment repository remains the `environment-repository/` directory belonging to the checkout that launched the server. The web repository database defaults to `ROOK_HOME/web-environment-repository.db` (`ROOK_WEB_ENVIRONMENT_REPOSITORY_DB` overrides it); `ROOK_WEB_SCOUT_DISABLED=1` stops new scouts while stored web content is still served, and `ROOK_WEB_SCOUT_TTL_MS` / `ROOK_WEB_SCOUT_ERROR_TTL_MS` override the refresh intervals.
+The launcher exports `ROOK_HOME` and `ROOK_DATABASE_PATH`. User-local configuration, the application database, and personal environment-repository bindings resolve under `ROOK_HOME`; the default is `~/.rook` for production and `~/.rook-<worktree-slug>` for a development worktree. The slug includes a short hash of the canonical worktree path, so same-named worktrees remain isolated. On first launch, development profiles seed `ROOK_HOME` by copying the production `~/.rook` directory, including the application database, so the development profile starts with the same sessions and durable local state; later launches leave the existing profile home unchanged. Runtime definitions, user configuration, personal and web environment-repository state, and other durable local state therefore become profile-specific. The default application database path is `ROOK_HOME/rook.sqlite`. `run-rook.sh` computes and exports `ROOK_HOME` / `ROOK_DATABASE_PATH` for the selected profile, so ambient values are not treated as launcher inputs; use `RUN_ROOK_HOME` / `RUN_ROOK_DATABASE_PATH` when an explicit launcher override is intended. `ROOK_AGENT_RUNTIMES_PATH` remains an explicit escape hatch. The canonical environment repository remains the `environment-repository/` directory belonging to the checkout that launched the server. Personal and scouted web rows share `ROOK_HOME/environment-repository.db`; `ROOK_PERSONAL_ENVIRONMENT_REPOSITORY_DB` overrides that shared location. `ROOK_WEB_SCOUT_DISABLED=1` stops new scouts while stored web content is still served, and `ROOK_WEB_SCOUT_TTL_MS` / `ROOK_WEB_SCOUT_ERROR_TTL_MS` override the refresh intervals.
 
 ## Persistence shape
 
@@ -126,7 +128,7 @@ Current durable persistence is SQLite-backed and split between:
 
 - the application database: session records, session-environment membership, and durable environment decisions
 - runtime-owned ACP session files: conversation history and replay source
-- the environment repository databases: environments, reusable capabilities, and bundle memberships for canonical, personal, and web repositories; the web database also holds per-host scout state
+- the environment repository databases: environments, reusable capabilities, and bundle memberships; the user-local database contains discriminator-scoped personal and web rows, with web scout state in environment metadata
 
 Canonical, personal, and web environment-repository content is SQLite-only. Project-directory environments remain the intentional direct file-backed exception. The global workspace is an inspectable projection, never durable storage.
 

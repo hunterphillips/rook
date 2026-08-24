@@ -6,6 +6,7 @@ import path from "node:path";
 import type { EnvironmentBundle, RepositoryReadError } from "../../shared/environmentRepository.js";
 import { EnvironmentRepositoryDatastore } from "../datastores/EnvironmentRepositoryDatastore.js";
 import { hostForWebEnvironmentId, normalizeHost, WebEnvironmentRepository, webEnvironmentIdForHost } from "./WebEnvironmentRepository.js";
+import { SQLiteEnvironmentRepository } from "./SQLiteEnvironmentRepository.js";
 
 const HOST = "example.com";
 const FETCHED_AT = "2026-08-18T12:00:00.000Z";
@@ -194,7 +195,12 @@ describe("WebEnvironmentRepository", () => {
     record(repository, { validators: { "llms.txt": { etag: '"v2"' } } });
 
     expect(repository.getScoutState(HOST)?.validators).toEqual({ "llms.txt": { etag: '"v2"' } });
-    expect(datastore.db.prepare("SELECT count(*) AS count FROM web_scout_resources").get()).toMatchObject({ count: 1 });
+    const metadata = datastore.db.prepare("SELECT metadata_json FROM environments WHERE repository = 'web' AND environment_id = ?")
+      .get(`web:${HOST}`) as { metadata_json: string };
+    expect(JSON.parse(metadata.metadata_json)).toMatchObject({
+      scout: { validators: { "llms.txt": { etag: '"v2"' } } },
+    });
+    expect(datastore.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'web_scout%'").all()).toEqual([]);
   });
 
   it("retries an errored host on the shorter error ttl when one is given", () => {
@@ -260,7 +266,7 @@ describe("WebEnvironmentRepository", () => {
   it("keeps scouted content across a close and reopen", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "rook-web-repo-"));
     tempDirs.push(directory);
-    const location = path.join(directory, "web-environment-repository.db");
+    const location = path.join(directory, "environment-repository.db");
     const first = new WebEnvironmentRepository(location);
     record(first);
     first.close();
@@ -269,6 +275,55 @@ describe("WebEnvironmentRepository", () => {
     expect((await reopened.getBundles(`web:${HOST}`)).bundles[0]?.agentsMd).toBe("Confirm before ordering.");
     expect(reopened.getScoutState(HOST)).toMatchObject({ host: HOST, status: "content", validators: { "llms.txt": { etag: '"v1"' } } });
     reopened.close();
+  });
+
+  it("isolates personal and web listings in one shared datastore", async () => {
+    const { repository: web, datastore } = open();
+    const personal = new SQLiteEnvironmentRepository(datastore, "personal");
+    personal.saveResult({
+      environment: { id: "web:personal.example", displayName: "Personal", description: "Personal only", metadata: {} },
+      bundles: [{ ...siteBundle(), id: `web:personal.example#${PERSONAL_BUNDLE_ID}`, bundleId: PERSONAL_BUNDLE_ID, environmentId: "web:personal.example", repository: "personal" }],
+      errors: [],
+    });
+    record(web);
+
+    expect((await personal.listEnvironments()).map((environment) => environment.id)).toEqual(["web:personal.example"]);
+    expect((await web.listEnvironments()).map((environment) => environment.id)).toEqual([`web:${HOST}`]);
+    expect(await personal.searchBundles("widgets", "web")).toEqual([]);
+    expect(await web.searchBundles("widgets", "personal")).toEqual([]);
+  });
+
+  it("keeps personal content when a web refresh empties the same host", async () => {
+    const { repository: web, datastore } = open();
+    const personal = new SQLiteEnvironmentRepository(datastore, "personal");
+    personal.saveResult({
+      environment: { id: `web:${HOST}`, displayName: "Personal Example", description: "Personal website skills", metadata: {} },
+      bundles: [{
+        ...siteBundle(),
+        id: `web:${HOST}#${PERSONAL_BUNDLE_ID}`,
+        bundleId: PERSONAL_BUNDLE_ID,
+        repository: "personal",
+        llmsTxt: undefined,
+        agentsMd: undefined,
+        skills: [{ id: "personal-widget", files: { "personal-widget/SKILL.md": "Personal instructions." } }],
+      }],
+      errors: [],
+    });
+    record(web);
+
+    expect((await personal.getBundles(`web:${HOST}`)).bundles[0]?.skills[0]?.id).toBe("personal-widget");
+    expect((await web.getBundles(`web:${HOST}`)).bundles[0]?.skills[0]?.id).toBe("order-widget");
+
+    record(web, { bundle: siteBundle({ skills: [{ id: "refreshed-widget", files: { "refreshed-widget/SKILL.md": "Refreshed." } }] }) });
+    expect((await web.getBundles(`web:${HOST}`)).bundles[0]?.skills[0]?.id).toBe("refreshed-widget");
+    expect((await personal.getBundles(`web:${HOST}`)).bundles[0]?.skills[0]?.id).toBe("personal-widget");
+
+    record(web, { status: "empty", bundle: null, validators: {} });
+
+    expect((await web.getBundles(`web:${HOST}`)).bundles).toEqual([]);
+    expect((await personal.getBundles(`web:${HOST}`)).bundles[0]?.skills[0]?.id).toBe("personal-widget");
+    expect(datastore.db.prepare("SELECT count(*) AS count FROM environments WHERE environment_id = ?").get(`web:${HOST}`))
+      .toEqual({ count: 2 });
   });
 
   it("maps hosts to host-rooted web environment ids and back", () => {
@@ -288,3 +343,5 @@ describe("WebEnvironmentRepository", () => {
     expect(normalizeHost("")).toBeNull();
   });
 });
+
+const PERSONAL_BUNDLE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
