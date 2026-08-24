@@ -21,7 +21,11 @@ type Route = GuardedFetchResult | (Omit<Extract<GuardedFetchResult, { kind: "ok"
 type Routes = Record<string, Route>;
 
 function ok(body: string, validators: { etag?: string; lastModified?: string; finalUrl?: string } = {}): Route {
-  return { kind: "ok", status: 200, body, ...validators };
+  return { kind: "ok", status: 200, body, bytes: new TextEncoder().encode(body), ...validators };
+}
+
+function okBytes(bytes: Uint8Array, validators: { etag?: string; lastModified?: string; finalUrl?: string } = {}): Route {
+  return { kind: "ok", status: 200, body: new TextDecoder().decode(bytes), bytes, ...validators };
 }
 
 /** The routed answer for one url, defaulting `finalUrl` to the url asked for. */
@@ -40,8 +44,8 @@ function failed(message = "connection reset"): GuardedFetchResult {
   return { kind: "error", reason: "network", message };
 }
 
-function digestOf(body: string): string {
-  return `sha256:${createHash("sha256").update(Buffer.from(body, "utf8")).digest("hex")}`;
+function digestOf(body: string | Uint8Array): string {
+  return `sha256:${createHash("sha256").update(body).digest("hex")}`;
 }
 
 function skillUrl(name: string): string {
@@ -236,13 +240,15 @@ describe("WebEnvironmentScout", () => {
   it("fetches a cross-origin skill url and drops a body that fails its digest", async () => {
     const trusted = "---\nname: trusted\n---\nTrusted.";
     const crossOriginUrl = "https://cdn.example.net/skills/trusted.md";
+    const tampered = "Something else entirely.";
+    const redirectedTamperedUrl = `https://${HOST}/skills/redirected-tampered.md`;
     const { scout, repository, urls } = harness({
       [INDEX_URL]: ok(indexBody([
         entry("trusted", trusted, { url: crossOriginUrl }),
         entry("tampered", trusted),
       ])),
       [crossOriginUrl]: ok(trusted),
-      [skillUrl("tampered")]: ok("Something else entirely."),
+      [skillUrl("tampered")]: ok(tampered, { finalUrl: redirectedTamperedUrl }),
     });
 
     await scout.scout(HOST);
@@ -251,7 +257,11 @@ describe("WebEnvironmentScout", () => {
     expect(bundle?.skills.map((skill) => skill.id)).toEqual(["trusted"]);
     expect(urls()).toContain(crossOriginUrl);
     expect(repository.getScoutState(HOST)?.errors).toEqual([
-      expect.objectContaining({ code: "invalid_bundle_contents", url: skillUrl("tampered"), message: expect.stringContaining("digest") }),
+      expect.objectContaining({
+        code: "invalid_bundle_contents",
+        url: skillUrl("tampered"),
+        message: expect.stringContaining(`fetched ${new TextEncoder().encode(tampered).byteLength} bytes from ${redirectedTamperedUrl}`),
+      }),
     ]);
   });
 
@@ -505,6 +515,22 @@ describe("WebEnvironmentScout", () => {
 
     const bundle = (await repository.getBundles(ENVIRONMENT_ID)).bundles[0];
     expect(bundle?.skills[0]?.files["order-widget/SKILL.md"]).toBe(served.slice(1));
+    expect(repository.getScoutState(HOST)?.errors).toEqual([]);
+  });
+
+  it("verifies a skill digest over raw bytes containing invalid UTF-8", async () => {
+    const prefix = new TextEncoder().encode("---\nname: raw-byte-skill\n---\nRaw byte: ");
+    const served = new Uint8Array([...prefix, 0xff]);
+    const decoded = new TextDecoder().decode(served);
+    const { scout, repository } = harness({
+      [INDEX_URL]: ok(indexBody([entry("raw-byte-skill", decoded, { digest: digestOf(served) })])),
+      [skillUrl("raw-byte-skill")]: okBytes(served),
+    });
+
+    await scout.scout(HOST);
+
+    const bundle = (await repository.getBundles(ENVIRONMENT_ID)).bundles[0];
+    expect(bundle?.skills[0]?.files["raw-byte-skill/SKILL.md"]).toBe(decoded);
     expect(repository.getScoutState(HOST)?.errors).toEqual([]);
   });
 

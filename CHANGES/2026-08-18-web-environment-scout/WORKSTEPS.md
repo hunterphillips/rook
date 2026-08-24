@@ -13,5 +13,8 @@
 - [x] Run final validation — server typecheck (both configs) + 220 tests, RookKit 69 tests, Mac build + offer-controller tests; one pre-existing acpFacade flake reproduces on origin/main
 - [x] Synchronize with main before submitting — origin/main unchanged at 0b6cdc8; branch is 0 behind. Re-synchronized with main 2026-08-21 (post PR #152 merge and transcript-store removal); conflicts were wiring/docs/tests only.
 - [x] Open and validate the PR — #159, mergeable
+- [x] Address review feedback round 1 (2026-08-24) — site-specific generated `llms.txt`
+      skills and raw-byte digest verification are complete; repository/database
+      consolidation follows next.
 - [ ] Merge with approval
 - [ ] Record outcomes and clean up

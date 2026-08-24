@@ -175,8 +175,8 @@ describe("WebScoutTrigger with EnvironmentManager", () => {
 
   it("re-registers the environment with the scouted bundle, offers it on entry, and stays quiet while fresh", async () => {
     const { trigger, registerSpy, fetchCalls } = harness({
-      [LLMS_URL]: { kind: "ok", status: 200, body: "# Example\nRead the docs.\n", finalUrl: LLMS_URL },
-      [AGENTS_URL]: { kind: "ok", status: 200, body: "Be brief.\n", finalUrl: AGENTS_URL },
+      [LLMS_URL]: { kind: "ok", status: 200, body: "# Example\nRead the docs.\n", bytes: new TextEncoder().encode("# Example\nRead the docs.\n"), finalUrl: LLMS_URL },
+      [AGENTS_URL]: { kind: "ok", status: 200, body: "Be brief.\n", bytes: new TextEncoder().encode("Be brief.\n"), finalUrl: AGENTS_URL },
     });
 
     // The route's order: register (nothing stored yet), then scout.

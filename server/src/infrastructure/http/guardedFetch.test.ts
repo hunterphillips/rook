@@ -30,6 +30,7 @@ describe("guardedFetch", () => {
       kind: "ok",
       status: 200,
       body: "# llms",
+      bytes: new TextEncoder().encode("# llms"),
       etag: '"v1"',
       lastModified: "Mon, 17 Aug 2026 12:00:00 GMT",
       contentType: "text/markdown",
@@ -43,9 +44,18 @@ describe("guardedFetch", () => {
 
     const result = await guardedFetch("https://example.com/llms.txt", { fetch: impl, lookup: PUBLIC_LOOKUP });
 
-    // The body has to stand for the exact bytes served, so a digest taken over it matches
-    // the one the publisher computed.
+    // Decoded content keeps its leading mark, while `bytes` retains the exact payload.
     expect(result).toMatchObject({ kind: "ok", body: served });
+  });
+
+  it("returns exact bytes when invalid UTF-8 decodes with replacement", async () => {
+    const served = new Uint8Array([0x66, 0x6f, 0xff, 0x6f]);
+    const { impl } = stubFetch(() => new Response(served, { status: 200 }));
+
+    const result = await guardedFetch("https://example.com/llms.txt", { fetch: impl, lookup: PUBLIC_LOOKUP });
+
+    expect(result).toMatchObject({ kind: "ok", body: "fo\uFFFDo" });
+    if (result.kind === "ok") expect(result.bytes).toEqual(served);
   });
 
   it("maps 304, 404, and 500 responses to not_modified, absent, and an http error", async () => {

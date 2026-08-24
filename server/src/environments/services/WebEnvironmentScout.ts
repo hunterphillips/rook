@@ -371,12 +371,12 @@ export class WebEnvironmentScout {
       pass.errors.push(unreachable(pass.environmentId, entry.url, `skill '${entry.name}': ${detail}`));
       return { artifact: null, transient: true };
     }
-    // Hashed over the body exactly as served, because that is what the publisher hashed.
-    const digest = createHash("sha256").update(Buffer.from(result.body, "utf8")).digest("hex");
+    // Hashed over the raw bytes exactly as served, because that is what the publisher hashed.
+    const digest = createHash("sha256").update(result.bytes).digest("hex");
     if (`sha256:${digest}` !== entry.digest) {
       pass.errors.push({
         code: "invalid_bundle_contents",
-        message: `Skill '${entry.name}' does not match its digest (expected ${entry.digest}, got sha256:${digest})`,
+        message: `Skill '${entry.name}' does not match its digest (expected ${entry.digest}, got sha256:${digest}; fetched ${result.bytes.byteLength} bytes from ${result.finalUrl})`,
         repository: WEB_REPOSITORY_ID,
         environmentId: pass.environmentId,
         bundleId: WEB_BUNDLE_ID,

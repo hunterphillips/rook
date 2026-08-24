@@ -130,3 +130,9 @@ and a read-only repository that serves the result through the normal offer → a
 - [x] `npm run typecheck`, `node ./node_modules/typescript/bin/tsc -p tsconfig.server.json --noEmit`,
       and `npm test` in `server/` pass; final review; sync with main; PR (documenting
       the adopted convention) through the fork.
+
+## Review round 1 (2026-08-24)
+
+- [x] Give each generated `llms.txt` skill a meaningful, site-specific name and description.
+- [x] Verify published skill digests over the raw fetched bytes and improve mismatch diagnostics.
+- [ ] Consolidate the web repository/database implementation with the shared repository infrastructure; handled next.

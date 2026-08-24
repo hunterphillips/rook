@@ -14,8 +14,8 @@ import { isDisallowedAddress } from "./ipAddressPolicy.js";
  * DNS is checked before the request but the resolved address is not pinned for the
  * connection, so a DNS-rebinding attack is out of scope for this guard.
  *
- * Bodies are decoded as UTF-8 byte-for-byte: a leading BOM is preserved so `body` still
- * represents exactly what the server sent.
+ * Bodies retain their exact bytes alongside UTF-8 decoded text. A leading BOM is
+ * preserved in `body`; invalid UTF-8 is decoded with the standard replacement character.
  */
 
 export const DEFAULT_TIMEOUT_MS = 5_000;
@@ -47,7 +47,7 @@ export interface GuardedFetchOptions {
 export type GuardedFetchErrorReason = "policy" | "timeout" | "too_large" | "network" | "http";
 
 export type GuardedFetchResult =
-  | { kind: "ok"; status: number; body: string; etag?: string; lastModified?: string; contentType?: string; finalUrl: string }
+  | { kind: "ok"; status: number; body: string; bytes: Uint8Array; etag?: string; lastModified?: string; contentType?: string; finalUrl: string }
   | { kind: "not_modified"; etag?: string; lastModified?: string }
   | { kind: "absent"; status: number }
   | { kind: "error"; reason: GuardedFetchErrorReason; status?: number; message: string };
@@ -80,15 +80,11 @@ function rejectOnAbort(signal: AbortSignal): Promise<never> {
   });
 }
 
-async function readCappedText(response: Response, maxBytes: number): Promise<{ capped: false; text: string } | { capped: true }> {
-  if (!response.body) return { capped: false, text: "" };
+async function readCappedBody(response: Response, maxBytes: number): Promise<{ capped: false; text: string; bytes: Uint8Array } | { capped: true }> {
+  if (!response.body) return { capped: false, text: "", bytes: new Uint8Array() };
   const reader = response.body.getReader();
-  // `ignoreBOM` keeps a leading BOM in the decoded text instead of swallowing it, so the
-  // string still stands for the exact bytes served — callers that hash a body against a
-  // publisher's digest depend on that.
-  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  const chunks: Uint8Array[] = [];
   let received = 0;
-  let text = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -97,9 +93,17 @@ async function readCappedText(response: Response, maxBytes: number): Promise<{ c
       await reader.cancel().catch(() => undefined);
       return { capped: true };
     }
-    text += decoder.decode(value, { stream: true });
+    chunks.push(value);
   }
-  return { capped: false, text: text + decoder.decode() };
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  // `ignoreBOM` keeps a leading BOM in the decoded text instead of swallowing it.
+  const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+  return { capped: false, text, bytes };
 }
 
 const defaultLookup: HostLookup = (hostname) => dnsLookup(hostname, { all: true });
@@ -189,9 +193,9 @@ export async function guardedFetch(url: string, options: GuardedFetchOptions = {
         return fail("http", `Unexpected status ${response.status} from ${target.href}`, response.status);
       }
 
-      let read: Awaited<ReturnType<typeof readCappedText>>;
+      let read: Awaited<ReturnType<typeof readCappedBody>>;
       try {
-        read = await readCappedText(response, maxBytes);
+        read = await readCappedBody(response, maxBytes);
       } catch (cause) {
         if (timedOut) return fail("timeout", `Reading ${target.href} timed out after ${timeoutMs}ms`);
         return fail("network", `Reading ${target.href} failed: ${errorMessage(cause)}`);
@@ -202,6 +206,7 @@ export async function guardedFetch(url: string, options: GuardedFetchOptions = {
         kind: "ok",
         status: response.status,
         body: read.text,
+        bytes: read.bytes,
         etag: response.headers.get("etag") ?? undefined,
         lastModified: response.headers.get("last-modified") ?? undefined,
         contentType: response.headers.get("content-type") ?? undefined,
