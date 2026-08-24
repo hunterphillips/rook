@@ -60,6 +60,7 @@ Same shared contract as other clients:
 - `blocks: [ChatBlock]`
 - pending environment offer
 - environment list items and bundle previews
+- durable pinned/recent session organization and session-management state
 - current place name / `placeEnvironmentId`
 - `placeSkillStatus[slug] -> Bool`
 - `nearbyCandidates: [EnvironmentCandidate]`
@@ -97,7 +98,7 @@ Same shared contract as other clients:
 4. the handle performs ACP `session/load` when it is new or recovering; an already-loaded background handle reuses its in-memory blocks
 5. after a successful resume/open, the client calls `POST /api/sessions/:id/touch` so the shared recents list reflects viewed sessions even without a prompt
 6. resumed handles open a dedicated session-bound WebSocket (`/api/ws?sessionId=...`) and reduce wire frames into `AcpClientEvent`s
-7. `RookModel` mirrors handle state into published chat/UI state, drives rename/delete session actions through REST, and layers on voice / Live Activity behavior
+7. `RookModel` mirrors handle state into published chat/UI state, drives rename/delete/pin session actions through REST, and layers on voice / Live Activity behavior
 8. on reconnect the model reattaches to the current session handle and re-announces place state
 
 ### Voice flow

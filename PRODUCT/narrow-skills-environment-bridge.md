@@ -14,7 +14,7 @@ This lets one Rook session understand that an environment exists without assumin
 
 ## Current boundary
 
-The current migration does not implement a universal bridge tool. Skills are loaded as files, the Mac bridge remains a separate client/server capability, and repository content is approved at bundle granularity. MCP configuration is stored and exposed for review, but MCP startup, tool enumeration, authentication, and lifecycle are deferred.
+The current product does not implement a universal bridge tool. Skills are loaded as files, the Mac bridge remains a separate client/server capability, and repository content is approved at bundle granularity. MCP configuration is stored and exposed for review, but MCP startup, tool enumeration, authentication, and lifecycle are deferred.
 
 ## Future requirements
 

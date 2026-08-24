@@ -1,6 +1,6 @@
 # Rook server
 
-Fastify API and runtime orchestration for the Rook native clients and CLI tooling. Part of the [Rook](../README.md) monorepo. Product/architecture notes: [PRODUCT/](../PRODUCT/). Repo-level setup, `.env`, binding, and auth live in [docs/setup.md](../docs/setup.md).
+Fastify API and runtime orchestration for the Rook native clients and CLI tooling. Part of the [Rook](../README.md) monorepo. Product and architecture notes live in [PRODUCT/](../PRODUCT/) and [AS-BUILT-ARCHITECTURE/](../AS-BUILT-ARCHITECTURE/). Repo-level environment/auth examples are in [.env.example](../.env.example).
 
 ## Quick start
 
@@ -21,17 +21,17 @@ That starts the backend on `http://127.0.0.1:7665` from the main checkout. When 
 
 ## Local profiles and state
 
-The launcher exports `ROOK_HOME` and `ROOK_DATABASE_PATH` for the selected profile. The main checkout keeps the existing defaults (`~/.rook/` for user-local state and `~/.rook/rook.sqlite` for the application database). A worktree defaults to `~/.rook-<worktree-slug>/rook.sqlite` and uses the worktree's canonical `environment-repository/` directory. The slug includes a short hash of the canonical worktree path.
+The launcher exports `ROOK_HOME` and `ROOK_DATABASE_PATH` for the selected profile. The main checkout keeps the existing defaults (`~/.rook/` for user-local state and `~/.rook/rook.sqlite` for the application database). A worktree defaults to `~/.rook-<worktree-slug>/rook.sqlite` and uses the worktree's canonical `environment-repository.db` file. The slug includes a short hash of the canonical worktree path.
 
-The server's user-local repository, environment-authoring bindings, and application database honor `ROOK_HOME`. Worktree slugs include a short path hash, so same-named worktrees receive separate homes. When the profile home does not exist, the launcher seeds it by copying `~/.rook`, including the application database, so the development profile starts with the same sessions and durable local state; subsequent configuration changes are isolated. `ROOK_AGENT_RUNTIMES_PATH` remains available as an explicit override. When starting the server through `run-rook.sh`, use `RUN_ROOK_HOME` / `RUN_ROOK_DATABASE_PATH` rather than ambient `ROOK_HOME` / `ROOK_DATABASE_PATH` to override the selected profile paths. The environment-repository API and bundle layout are unchanged.
+The runtime configuration, application database, capability workspaces, and environment-authoring bindings honor `ROOK_HOME`. The personal environment repository database remains a separate source and defaults to `~/.rook/environment-repository.db`; set `ROOK_PERSONAL_ENVIRONMENT_REPOSITORY_DB` to isolate it for a profile. Worktree slugs include a short path hash, so same-named worktrees receive separate homes. When the profile home does not exist, the launcher seeds it by copying `~/.rook`, including the application database, so the development profile starts with the same sessions and durable local state; subsequent configuration changes are isolated. `ROOK_AGENT_RUNTIMES_PATH` remains available as an explicit override. When starting the server through `run-rook.sh`, use `RUN_ROOK_HOME` / `RUN_ROOK_DATABASE_PATH` rather than ambient `ROOK_HOME` / `ROOK_DATABASE_PATH` to override the selected profile paths. The environment-repository API and bundle layout are unchanged.
 
 ## Network binding and auth
 
-The server binds loopback (`127.0.0.1`) by default. For remote phone access, set `ROOK_BIND_IP` to add a second listener. When `ROOK_AUTH_TOKEN` is configured, every HTTP + WebSocket client — including localhost — must send it. See [docs/setup.md](../docs/setup.md).
+The server binds loopback (`127.0.0.1`) by default. For remote phone access, set `ROOK_BIND_IP` to add a second listener. When `ROOK_AUTH_TOKEN` is configured, every HTTP + WebSocket client — including localhost — must send it. See [.env.example](../.env.example) and the launcher examples in the root [README](../README.md).
 
 ## Runtime configuration
 
-Rook loads configured runtimes from `~/.rook/config/agent-runtimes.json`. See `../docs/configuration.md`.
+Rook loads configured runtimes from `~/.rook/config/agent-runtimes.json`; the schema is validated by `src/infrastructure/config/agentRuntimes.ts`.
 
 Default example:
 
@@ -43,7 +43,7 @@ Default example:
 }
 ```
 
-A `MockAcpAgent` is configured for fast CLI-driven testing — it keeps agent history in memory, replays it on `session/load`, and handles common prompt patterns.
+A `MockAcpAgent` is configured for fast CLI-driven testing — it keeps agent history in memory, replays it on `session/load`, and handles common prompt patterns. The standalone CLI architecture is documented in [../AS-BUILT-ARCHITECTURE/cli.md](../AS-BUILT-ARCHITECTURE/cli.md).
 
 ## Architecture
 
@@ -122,16 +122,16 @@ It implements:
 - Sessions are a unified cross-runtime list: pinned sessions use durable `pinnedOrder`, followed by unpinned sessions ordered by `updatedAt` desc
 - `updatedAt` now represents both prompt activity and explicit client-side "viewed" touches, so opening/resuming a session moves it to the top
 - `attention_status` durably stores `clear`, `ready`, or `error`; live turn/liveness state is combined into `activityStatus` with precedence `Active` > `Ready` > `Error` > `On` > `Off`. Timed-out or force-cancelled turns become `Error` rather than remaining permanently Active.
-- Session-to-environment membership persists in `session_environments`
+- Session-to-environment membership persists in `session_environments`; on first use after restart, known repository-backed memberships are rehydrated before workspace/runtime recovery, while unobserved environments remain visible as entered entries and retain their deterministic personal authoring projection
 - Runtime-owned ACP history is authoritative. Clients populate session state through requester-private `session/load` replay; the server stores session metadata and lifecycle state.
 
 ### Runtime management
 
 `AgentRuntimeManager` lazily creates one `SessionRuntime` subprocess per active session. Runtime creation is serialized per public session, so concurrent loads/prompts share one subprocess. Provider differences (Pi, Claude, Cursor, generic ACP) are composed launch strategies in `runtimeLaunchPlan.ts`, not subclasses.
 
-ACP startup/load requests have bounded waits (`ROOK_RUNTIME_REQUEST_TIMEOUT_MS`). Prompts use an inactivity timeout (`ROOK_RUNTIME_PROMPT_INACTIVITY_TIMEOUT_MS`, one minute by default) that resets whenever the runtime streams an update, so long-running streamed turns remain valid. Cancellation has a shorter grace period (`ROOK_RUNTIME_CANCEL_GRACE_MS`). A timeout force-stops the owned runtime process group, clears the turn, and marks the session `Error`. Runtimes with no user or runtime activity for 30 minutes are collected (`ROOK_RUNTIME_IDLE_TIMEOUT_MS`) without deleting their durable sessions. The next client request lazily creates one replacement; it does not automatically replay `session/load` or the possibly side-effecting prompt. `ROOK_RUNTIME_SHUTDOWN_TIMEOUT_MS` bounds graceful process-group shutdown.
+ACP startup/load requests have bounded waits (`ROOK_RUNTIME_REQUEST_TIMEOUT_MS`). Prompts use an inactivity timeout (`ROOK_RUNTIME_PROMPT_INACTIVITY_TIMEOUT_MS`, one minute by default) that resets whenever the runtime streams an update, so long-running streamed turns remain valid. Cancellation has a shorter grace period (`ROOK_RUNTIME_CANCEL_GRACE_MS`). A timeout force-stops the owned runtime process group, clears the turn, and marks the session `Error`. Runtimes with no user or runtime activity for 30 minutes are collected (`ROOK_RUNTIME_IDLE_TIMEOUT_MS`) without deleting their durable sessions. The next client request lazily creates one replacement, privately loads the persisted ACP session before prompting, and discards the transcript replay so the visible chat is not repainted. `ROOK_RUNTIME_SHUTDOWN_TIMEOUT_MS` bounds graceful process-group shutdown.
 
-On environment change, only the affected session's runtime is restarted. The replacement normally takes over through `session/load`; if the runtime returns an ACP response error for that load, Rook retries with `session/new` and persists the replacement runtime session id. Startup, transport, timeout, and malformed-load-response failures still abort the restart. Rook shutdown and session deletion terminate the complete adapter/provider process group, not only the direct ACP adapter.
+On environment change, only the affected session's runtime is restarted. After server restart, the first request for a persisted session rehydrates known environment memberships and preserves unobserved memberships as visible entered entries; approved/personal workspace content—including deterministic personal authoring projections for unobserved non-directory environments—is rematerialized before recovering the ACP session. The replacement normally takes over through `session/load`; if the runtime returns an ACP response error for that load, Rook retries with `session/new` and persists the replacement runtime session id. Startup, transport, timeout, and malformed-load-response failures still abort the restart. Rook shutdown and session deletion terminate the complete adapter/provider process group, not only the direct ACP adapter.
 
 ### Environment system
 

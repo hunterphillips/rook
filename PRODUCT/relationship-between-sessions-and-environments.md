@@ -1,6 +1,6 @@
 # Relationship between sessions and environments
 
-A session is one public Rook conversation backed by one ACP runtime subprocess. An environment is a context such as a website, physical location, app surface, or project directory. A session may explicitly enter multiple environments.
+A session is one public Rook conversation backed by one owned ACP runtime process group. An environment is a context such as a website, physical location, app surface, or project directory. A session may explicitly enter multiple environments.
 
 ## Session selection and pinning
 
@@ -44,10 +44,12 @@ The session does not implicitly enter parent environments, and availability does
 
 ## Session isolation
 
-Each public session has its own ACP runtime subprocess, disposable agent workspace links, entered-environment membership, and ephemeral accept/ignore decisions. Writable SQLite sources can be shared by multiple sessions; project sources are linked directly. The durable approve/reject record is application-wide by content hash. Thus approving a canonical bundle in one session can make it eligible in another session, but the second session must still explicitly enter the environment.
+Each public session has its own ACP runtime process group, disposable agent workspace links, entered-environment membership, and ephemeral accept/ignore decisions. Writable SQLite sources can be shared by multiple sessions; project sources are linked directly. The durable approve/reject record is application-wide by content hash. Thus approving a canonical bundle in one session can make it eligible in another session, but the second session must still explicitly enter the environment.
 
 ## Restart behavior
 
-Environment changes update the session's links and generated aggregate, start a replacement runtime, and normally retire the old process after successful ACP session loading. If the runtime rejects `session/load` with an ACP response error, the replacement retries with `session/new`; startup, transport, timeout, and malformed-load-response failures still abort the restart. Shared file edits are watched and do not independently require runtime restart. Session membership remains durable; transcript history remains owned by the ACP runtime.
+Environment changes update the session's links and generated aggregate, start a replacement runtime, and normally retire the previous process after successful ACP session loading. If the runtime rejects `session/load` with an ACP response error, the replacement retries with `session/new`; startup, transport, timeout, and malformed-load-response failures still abort the restart. Shared file edits are watched and do not independently require runtime restart. Session membership remains durable; transcript history remains owned by the ACP runtime.
+
+If a runtime is replaced for any other reason, the server privately performs the same persisted-session load before forwarding the next prompt. On the first request after a server restart, persisted session-environment memberships are rehydrated from repositories before workspace materialization and runtime recovery; unobserved environments remain visible as recent entered entries without deleting their durable membership; repository-backed external bundles and non-directory personal authoring projections remain usable for entered environments. The replay is discarded before the replacement is attached to visible subscribers, so clients do not repaint the existing conversation.
 
 Concurrent edits to one personal bundle are currently last-write-wins/deferred; conflict merging is future work.

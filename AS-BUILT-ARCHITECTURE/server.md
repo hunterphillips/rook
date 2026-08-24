@@ -2,7 +2,7 @@
 
 ## Summary
 
-The server is a Fastify service on `127.0.0.1:7665` for the main checkout, with an optional second remote/VPN listener. A Git worktree launched through `scripts/run-rook.sh` receives an isolated development profile with a deterministic alternate port and profile-specific local state. The server exposes a session-bound ACP WebSocket facade at `/api/ws`, a REST control plane for runtimes, sessions, and environments, and an internal runtime broker that launches one ACP subprocess per public session.
+The server is a Fastify service on `127.0.0.1:7665` for the main checkout, with an optional second remote/VPN listener. A Git worktree launched through `scripts/run-rook.sh` receives an isolated development profile with a deterministic alternate port and profile-specific local state. The server exposes a session-bound ACP WebSocket facade at `/api/ws`, a REST control plane for runtimes, sessions, and environments, and an internal runtime broker that launches one ACP subprocess owned as a process group per public session.
 
 ## Main components
 
@@ -37,6 +37,12 @@ The server is a Fastify service on `127.0.0.1:7665` for the main checkout, with 
   - the trigger runs after `POST /api/environments/register` for `web:<host>` candidates: scout, then re-register the candidate when the stored content changed so summaries and offers refresh
 - `infrastructure/http/guardedFetch` and `ipAddressPolicy`
   - the server's general outbound-HTTP path: HTTPS only, private/loopback/link-local addresses refused, same-host redirects up to 3 hops, one deadline per call, 1 MiB body cap, fixed `Rook/<version>` user agent
+- `environments/repositories/LocationContextRepository`
+  - in-memory synthetic repository for the generated location-context skill bundle
+- `environments/services/JsonlEnvironmentMetadataCaptureSink`
+  - appends candidate-registration metadata to ignored local JSONL files for development inspection; it does not persist capability content
+- `location/PtilesPoiLookupProvider`
+  - production POI lookup using byte-range reads from the upstream `.ptiles` datasets, with building/business matching and scoring
 - `runtime/CapabilityWorkspaceManager`
   - owns the process-wide `$ROOK_HOME/global-workspace/` SQLite materialization, environment-level manifest, watchers, and disposable per-session link projections; defaults to the active profile's `ROOK_HOME`, clears the global root at startup, and retains it after shutdown
   - links writable personal content into every applicable session, links project sources directly, and materializes immutable external content read-only
@@ -46,11 +52,16 @@ The server is a Fastify service on `127.0.0.1:7665` for the main checkout, with 
   - persists durable environment decisions keyed by bundle hash directly in SQLite
 - location services
   - `location/EnvironmentIdentifier` ranks nearby `location:` environments
-  - `location/LocationRegistrar` syncs identified locations into the environment manager
+  - `location/LocationRegistrar` applies dwell gating, registers the current/nearby candidates, and writes the current location-context skill
+  - `location/ptiles/` parses and queries admin, building, and business vector-tile data
+- `shared/`
+  - server-side ACP JSON-RPC, agent, environment, repository, and bundle-hash contracts shared across domains
+- `infrastructure/remoteProxy`
+  - optional second listener that proxies a remote/VPN address to the loopback Fastify server
 
 ## Source organization
 
-The server is now organized **primarily by domain**. Within a domain, subfolders such as `routes/`, `services/`, `repositories/`, and `datastores/` are used only when that domain actually has those layers.
+The server is organized **primarily by domain**. Within a domain, subfolders such as `routes/`, `services/`, `repositories/`, and `datastores/` are used only when that domain actually has those layers.
 
 Top-level layout:
 
@@ -64,7 +75,11 @@ Top-level layout:
 - `server/src/environments/`
   - environment routes, services, repositories, datastores, prompt/binding/type support
 - `server/src/location/`
-  - location identification, POI lookup providers, dwell logic, trace helpers, and environment bridge helpers
+  - location identification, POI lookup providers, dwell logic, trace helpers, ptiles readers/scoring, and environment bridge helpers
+- `server/src/shared/`
+  - cross-domain wire and DTO contracts; this is shared server code, not a second application layer
+- `server/scripts/location/`
+  - GPX replay, dwell analysis, trace fetching, and map-rendering tools used to validate the location pipeline
 
 Important nuance:
 - not every domain needs every layer
@@ -120,7 +135,7 @@ See also: [database.md](./database.md)
 
 ## Local profile configuration
 
-The launcher exports `ROOK_HOME` and `ROOK_DATABASE_PATH`. User-local configuration, the application database, and personal environment-repository bindings resolve under `ROOK_HOME`; the default is `~/.rook` for production and `~/.rook-<worktree-slug>` for a development worktree. The slug includes a short hash of the canonical worktree path, so same-named worktrees remain isolated. On first launch, development profiles seed `ROOK_HOME` by copying the production `~/.rook` directory, including the application database, so the development profile starts with the same sessions and durable local state; later launches leave the existing profile home unchanged. Runtime definitions, user configuration, personal and web environment-repository state, and other durable local state therefore become profile-specific. The default application database path is `ROOK_HOME/rook.sqlite`. `run-rook.sh` computes and exports `ROOK_HOME` / `ROOK_DATABASE_PATH` for the selected profile, so ambient values are not treated as launcher inputs; use `RUN_ROOK_HOME` / `RUN_ROOK_DATABASE_PATH` when an explicit launcher override is intended. `ROOK_AGENT_RUNTIMES_PATH` remains an explicit escape hatch. The canonical environment repository remains the `environment-repository/` directory belonging to the checkout that launched the server. Personal and scouted web rows share `ROOK_HOME/environment-repository.db`; `ROOK_PERSONAL_ENVIRONMENT_REPOSITORY_DB` overrides that shared location. `ROOK_WEB_SCOUT_DISABLED=1` stops new scouts while stored web content is still served, and `ROOK_WEB_SCOUT_TTL_MS` / `ROOK_WEB_SCOUT_ERROR_TTL_MS` override the refresh intervals.
+The launcher exports `ROOK_HOME` and `ROOK_DATABASE_PATH`. Runtime configuration, the application database, and capability workspaces resolve under `ROOK_HOME`; the default is `~/.rook` for production and `~/.rook-<worktree-slug>` for a development worktree. The slug includes a short hash of the canonical worktree path, so same-named worktrees remain isolated. On first launch, development profiles seed `ROOK_HOME` by copying the production `~/.rook` directory, including the application database, so the development profile starts with the same sessions and durable local state; later launches leave the existing profile home unchanged. The default application database path is `ROOK_HOME/rook.sqlite`. The personal environment-repository database is a separate source and defaults to `~/.rook/environment-repository.db`; it only follows a different profile when `ROOK_PERSONAL_ENVIRONMENT_REPOSITORY_DB` is explicitly set. `run-rook.sh` computes and exports `ROOK_HOME` / `ROOK_DATABASE_PATH` for the selected profile, so ambient values are not treated as launcher inputs; use `RUN_ROOK_HOME` / `RUN_ROOK_DATABASE_PATH` when an explicit launcher override is intended. `ROOK_AGENT_RUNTIMES_PATH` remains an explicit escape hatch. The canonical environment repository remains the `environment-repository.db` file belonging to the checkout that launched the server. Scouted web rows share the personal environment-repository database. `ROOK_WEB_SCOUT_DISABLED=1` stops new scouts while stored web content is still served, and `ROOK_WEB_SCOUT_TTL_MS` / `ROOK_WEB_SCOUT_ERROR_TTL_MS` override the refresh intervals.
 
 ## Persistence shape
 
@@ -130,7 +145,7 @@ Current durable persistence is SQLite-backed and split between:
 - runtime-owned ACP session files: conversation history and replay source
 - the environment repository databases: environments, reusable capabilities, and bundle memberships; the user-local database contains discriminator-scoped personal and web rows, with web scout state in environment metadata
 
-Canonical, personal, and web environment-repository content is SQLite-only. Project-directory environments remain the intentional direct file-backed exception. The global workspace is an inspectable projection, never durable storage.
+Canonical, personal, and scouted web environment-repository content is SQLite-only. Project-directory environments remain the intentional direct file-backed exception, and location-context bundles are an in-memory synthetic repository backed by a generated skill directory. The global workspace is an inspectable projection, never durable storage. Deterministic personal authoring bundles are recreated from entered non-directory memberships independently of live observation status. By default, a development profile isolates the application database and workspaces but shares the personal repository database with the production profile unless the personal database override is supplied.
 
 The database details live in [database.md](./database.md).
 
@@ -208,7 +223,7 @@ Related tables:
 6. runtime emits `session/update` notifications
 7. `AgentRuntimeManager` distinguishes pi-acp's retry-only progress messages from actual agent output; an `end_turn` with exhausted retry progress and no actual output becomes a failed prompt, while a recovered turn remains successful
 8. server rewrites session IDs back to the public ID and forwards live notifications to subscribed watchers of that same session
-9. bounded request/cancellation waits force-stop an unresponsive runtime group, reconcile the turn state, and mark the session `error`; a later request lazily creates one replacement without replaying the interrupted prompt
+9. bounded request/cancellation waits force-stop an unresponsive runtime group, reconcile the turn state, and mark the session `error`; a later request lazily creates one replacement, privately adopts the persisted ACP session with `session/load`, and then forwards the new prompt without replaying the transcript or interrupted prompt
 
 ### Environment offer and approval
 1. a provider registers an environment candidate with `POST /api/environments/register`
@@ -216,7 +231,7 @@ Related tables:
 3. finalized environments resolve matching bundles and hash them
 4. undecided bundles are offered to subscribed sessions when that session enters the finalized environment
 5. client resolves via REST decision or ACP extension resolution
-6. approved/personal bundle content is resolved for workspace projection. The generated aggregate `AGENTS.md` exposes approved/user-owned instruction sources in environment-tagged blocks, gives authoring guidance, inventories known skill names by environment, and the workspace uses the standard `.agents/skills/` discovery directory, aliased as `.claude/skills` so Claude Code's native skill discovery finds the same content; Pi receives one-run project approval because ACP is non-interactive, and the runtime no longer receives duplicate environment prompt injection.
+6. approved/personal bundle content is resolved for workspace projection. The generated aggregate `AGENTS.md` exposes approved/user-owned instruction sources in environment-tagged blocks, gives authoring guidance, inventories known skill names by environment, and the workspace uses the standard `.agents/skills/` discovery directory, aliased as `.claude/skills` so Claude Code's native skill discovery finds the same content; Pi receives one-run project approval because ACP is non-interactive, and environment instructions are not duplicated through launch prompt injection.
 
 ### Environment-driven runtime restart
 1. session enters or exits an environment
@@ -224,24 +239,30 @@ Related tables:
 3. shared SQLite/project sources receive a final assessment before replacement; ordinary file edits do not themselves require runtime restart
 4. it creates a replacement `SessionRuntime` with the workspace as cwd
 5. replacement normally takes over through `session/load` of the exact existing runtime session; if the runtime returns an ACP response error for that load, it retries with `session/new` and persists the new runtime session id, while startup, transport, timeout, and malformed-load-response failures abort the restart
-6. only then is the old subprocess retired
+6. only then is the previous subprocess retired
+
+### Session environment restoration
+1. the first request for a persisted session after server startup reads its durable `session_environments` membership
+2. known repository-backed environments are rehydrated into the fresh `EnvironmentManager`; unobserved memberships remain entered as recent UI entries without deleting membership, while entered environments retain repository-backed bundles and non-directory memberships receive their deterministic personal authoring projection
+3. rehydrated entries follow the normal bundle decision, workspace materialization, and affected-session runtime replacement flow
+4. the request then privately recovers the persisted ACP session before forwarding the client operation
 
 ### Location registration
 1. phone client posts `register-location`
-2. `EnvironmentIdentifier` ranks nearby business environments
-3. `LocationRegistrar` syncs them into the active/recent environment cache
-4. affected sessions receive offers and/or environment-entered updates
+2. `EnvironmentIdentifier` queries the configured `PoiLookupProvider` (the production path is `PtilesPoiLookupProvider`) and ranks nearby business environments
+3. `LocationRegistrar` rejects drive-by observations, writes a generated location-context `SKILL.md` for a genuine dwell, and registers the current/nearby candidates through the normal repository facade
+4. the current candidate is accepted for the active environment flow; affected sessions receive offers and/or environment-entered updates
 
 ## Notable architectural characteristics
 
 - one public session = one owned runtime process group
 - non-prompt runtime waits are bounded; prompt inactivity timeout resets on streamed updates, while cancellation timeout force-stops the group and reconciles turn state
-- runtimes idle for 30 minutes without user or runtime activity are collected without deleting their durable sessions; recovery waits for the client’s explicit `session/load` rather than replaying it implicitly
+- runtimes idle for 30 minutes without user or runtime activity are collected without deleting their durable sessions; the next server request privately restores the persisted ACP session before prompting
 - Rook shutdown and session deletion terminate all owned runtime groups, including provider descendants
 - websocket connections are session-bound, not general multi-session ACP pipes
-- `session/load` replay is requester-private; it no longer fans out to every watcher of that session
+- `session/load` replay is requester-private; it is not fanned out to other watchers of that session
 - session discovery uses the REST sessions endpoint
-- ACP runtime history is the sole transcript source; clients use requester-private `session/load` replay for initial and recovery hydration
+- ACP runtime history is the sole transcript source; clients use requester-private `session/load` replay for initial hydration, while server-side runtime recovery discards that replay before attaching the replacement to visible subscribers
 - environment state is session-specific at runtime launch time
 - writable SQLite capability files have one process-wide temporary materialization and are linked into per-session workspaces
 - durable decisions and session membership are SQLite-backed; ACP session history remains runtime-owned
@@ -249,4 +270,5 @@ Related tables:
 - web content is fetched only by the scout, off the session's critical path, through the guarded fetch helper; repository reads never touch the network
 - facts and `llms.txt` use capability-specific projections; MCP content is reviewable/read-only but not started by the runtime
 - personal authoring uses one shared writable source per environment, watcher-mediated current-content write-back and membership soft deletion, and explicit environment authoring directories; filesystem permissions are not a strong sandbox against same-user arbitrary shell access
-- location identification is provider-pluggable behind `PoiLookupProvider`
+- location identification is provider-pluggable behind `PoiLookupProvider`; production uses range-fetched ptiles data and tests commonly use `StubPoiLookupProvider`
+- development/validation tooling includes GPX replay and trace-analysis scripts under `server/scripts/location/`; these are operational tools, not server request routes

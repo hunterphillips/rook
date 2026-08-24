@@ -20,14 +20,20 @@
   - client-side chat/event abstractions used by both apps, including ACP-ready image attachments
 - `Models/JSONValue.swift`
   - Codable dynamic JSON representation for round-tripping wire payloads
+- `Models/ChatState.swift`
+  - shared session/run/permission state used by the Apple reducers
+- `Models/AgentTurnContentTracker.swift`
+  - tracks streamed turn content and completion boundaries
 - `Design/*`
-  - shared SwiftUI components and chat block renderers
+  - shared SwiftUI panels, markdown partitioning, and chat block renderers
 - `Voice/VoiceController.swift`
   - shared speech recognition / speech synthesis wrapper
 - `LiveActivity/RookActivityAttributes.swift`
   - iOS-only shared ActivityKit attributes
+- `Logging/RookLog.swift`
+  - centralized Unified Logging and signpost timing instrumentation
 - support utilities
-  - `KeychainStore`, `EnvironmentListPresentation`, `ToolPayloadFormatting`, `Clipboard`
+  - `KeychainStore`, `EnvironmentListPresentation`, `ToolPayloadFormatting`, `StreamingMarkdownPartitioner`, `Clipboard`
 
 ## Main interfaces
 
@@ -51,7 +57,8 @@
 - `healthResult()` / `health()`
 - `agents()`
 - `sessions()` — session list over REST
-- `renameSession(sessionId:title:)`, `touchSession(sessionId:)`, `deleteSession(sessionId:)` — session management over REST
+- `renameSession(sessionId:title:)`, `touchSession(sessionId:)`, `unviewSession(sessionId:)`, `deleteSession(sessionId:)` — session management over REST
+- `reorderPinnedSessions(sessionIds:)` — replaces the durable pinned-session order over REST
 - `environmentPreview(environmentId:)`
 - `registerEnvironment(candidate)`
 - bundle/environment preview payloads preserve repository identity and derived bundle hashes for review and revalidation UI

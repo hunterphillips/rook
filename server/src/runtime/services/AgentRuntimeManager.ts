@@ -52,6 +52,7 @@ export class AgentRuntimeManager {
   private readonly inboundRequestRoutes = new Map<string, SessionRuntime>();
   private readonly environmentSubscriptions = new Set<string>();
   private readonly restoredEnvironmentMembership = new Set<string>();
+  private readonly environmentRestorationQueues = new Map<string, Promise<void>>();
   private readonly environmentSkillPaths = new Map<string, Map<string, string[]>>();
   private readonly environmentRestartQueues = new Map<string, Promise<void>>();
   private readonly privateReplayTargets = new Map<string, Set<RuntimeNotification>>();
@@ -122,6 +123,13 @@ export class AgentRuntimeManager {
 
   async listSessions(): Promise<SessionRecord[]> {
     return this.sessions.list();
+  }
+
+  async listEnvironments(sessionId: string): Promise<ReturnType<EnvironmentManager["environmentList"]>> {
+    if (!this.environmentManager) return [];
+    const record = await this.requireSession(sessionId);
+    await this.restoreEnvironmentMembership(record);
+    return this.environmentManager.environmentList(sessionId);
   }
 
   async getSession(sessionId: string): Promise<SessionRecord> {
@@ -229,7 +237,7 @@ export class AgentRuntimeManager {
     try {
       record = await this.requireSession(sessionId);
       await this.restoreEnvironmentMembership(record);
-      runtime = await this.runtimeFor(record);
+      runtime = await this.runtimeFor(record, { adoptSession: method !== "session/load" });
       const runtimeParams =
         method === "session/load"
           ? { cwd: record.cwd, mcpServers: [], ...params, sessionId: record.runtimeSessionId }
@@ -349,7 +357,7 @@ export class AgentRuntimeManager {
     this.beginRuntimeOperation(sessionId);
     try {
       const record = await this.requireSession(sessionId);
-      const current = await this.runtimeFor(record);
+      const current = await this.runtimeFor(record, { adoptSession: false });
       const replacement = current.replacement(configuration);
       let runtimeSessionId: string;
       try {
@@ -370,12 +378,11 @@ export class AgentRuntimeManager {
   }
 
   /**
-   * Loads the existing ACP session when possible. A response-level load error
-   * means the runtime rejected that session, so a fresh ACP session can take
-   * over without confusing startup, transport, or timeout failures with an
-   * unresumable session.
+   * Loads the existing ACP session on a replacement runtime. Environment
+   * restarts may retain the historical virgin-session fallback, but ordinary
+   * runtime recovery must not silently discard a session's conversation.
    */
-  private async adoptSessionOnRuntime(record: SessionRecord, replacement: SessionRuntime, configuration: SessionRuntimeConfiguration): Promise<string> {
+  private async adoptSessionOnRuntime(record: SessionRecord, replacement: SessionRuntime, configuration: SessionRuntimeConfiguration, options: { allowNew?: boolean } = {}): Promise<string> {
     try {
       const result = await this.requestWithTimeout(
         replacement,
@@ -388,7 +395,9 @@ export class AgentRuntimeManager {
       }
       return record.runtimeSessionId;
     } catch (error) {
-      if (!(error instanceof RuntimeRequestError)) throw error;
+      if (options.allowNew === false || !(error instanceof RuntimeRequestError)) throw error;
+      // Existing environment-restart recovery retains its virgin-session fallback;
+      // ordinary runtime replacement never takes this path for historical sessions.
       const result = await this.requestWithTimeout(
         replacement,
         "session/new",
@@ -488,10 +497,11 @@ export class AgentRuntimeManager {
     this.environmentSkillPaths.clear();
     this.environmentRestartQueues.clear();
     this.restoredEnvironmentMembership.clear();
+    this.environmentRestorationQueues.clear();
     this.workspaceResults.clear();
   }
 
-  private async runtimeFor(record: SessionRecord): Promise<SessionRuntime> {
+  private async runtimeFor(record: SessionRecord, options: { adoptSession?: boolean } = {}): Promise<SessionRuntime> {
     if (this.closed) throw new Error("Rook runtime manager is closed");
     const existing = this.sessionRuntimes.get(record.sessionId);
     if (existing?.isStarted) return existing;
@@ -507,6 +517,14 @@ export class AgentRuntimeManager {
         ...this.baseRuntimeConfiguration(),
         ...(workspace ? { workspaceRoot: workspace.root } : {}),
       });
+      try {
+        if (options.adoptSession !== false) {
+          await this.adoptSessionOnRuntime(record, runtime, runtime.configuration, { allowNew: false });
+        }
+      } catch (error) {
+        await runtime.close();
+        throw error;
+      }
       if (current) this.replaceSessionRuntime(record.sessionId, runtime);
       else this.attachSessionRuntime(record.sessionId, runtime);
       this.subscribeToEnvironments(record.sessionId);
@@ -580,6 +598,7 @@ export class AgentRuntimeManager {
     this.environmentSkillPaths.delete(sessionId);
     this.environmentRestartQueues.delete(sessionId);
     this.restoredEnvironmentMembership.delete(sessionId);
+    this.environmentRestorationQueues.delete(sessionId);
     this.workspaceResults.delete(sessionId);
     this.runtimeActivities.delete(sessionId);
     this.promptActivityListeners.delete(sessionId);
@@ -616,15 +635,29 @@ export class AgentRuntimeManager {
 
   private async restoreEnvironmentMembership(record: SessionRecord): Promise<void> {
     if (!this.environmentManager || this.restoredEnvironmentMembership.has(record.sessionId)) return;
+    const existing = this.environmentRestorationQueues.get(record.sessionId);
+    if (existing) return existing;
+
+    const restoration = this.restoreEnvironmentMembershipNow(record);
+    this.environmentRestorationQueues.set(record.sessionId, restoration);
+    try {
+      await restoration;
+    } catch (error) {
+      if (this.environmentRestorationQueues.get(record.sessionId) === restoration) this.environmentRestorationQueues.delete(record.sessionId);
+      throw error;
+    }
+  }
+
+  private async restoreEnvironmentMembershipNow(record: SessionRecord): Promise<void> {
     this.subscribeToEnvironments(record.sessionId);
     if (!this.workspaceResults.has(record.sessionId)) {
       this.workspaceResults.set(record.sessionId, await this.workspaceManager.materialize(record.sessionId, []));
     }
-    this.restoredEnvironmentMembership.add(record.sessionId);
     for (const environmentId of await this.sessions.environmentIds(record.sessionId)) {
-      await this.environmentManager.enterEnvironment(record.sessionId, environmentId);
+      await this.environmentManager!.restoreEnvironment(record.sessionId, environmentId);
     }
     await this.environmentRestartQueues.get(record.sessionId);
+    this.restoredEnvironmentMembership.add(record.sessionId);
   }
 
   private updateEnvironmentState(sessionId: string, environmentId: string, skillPaths: string[]): void {

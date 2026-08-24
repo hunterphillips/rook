@@ -11,7 +11,42 @@ Rook's durable server state is split across SQLite databases:
 
 The application database remains separate from environment repositories. This database is intentionally small: it stores session persistence, session membership, and durable environment decisions. Runtime processes, ACP session history, active/recent environment caches, subscribers, and workspace projections remain outside this database. By default it lives under `ROOK_HOME/rook.sqlite` (`~/.rook/rook.sqlite` for the main checkout and `~/.rook-<worktree-slug>/rook.sqlite` for development worktrees), with `ROOK_DATABASE_PATH` as an explicit override.
 
-For session recency, the existing `sessions.updated_at` field represents both prompt activity and explicit client-side view/touch events. The sessions table also stores `attention_status`, a CHECK-constrained enum of `clear`, `ready`, or `error`, plus durable `pinned` and `pinned_order` metadata. Active-turn state and view presence remain transient server state; the API combines them with the durable enum to return `activityStatus` as `active`, `ready`, `error`, `on`, or `off`. Pinning and pinned reordering do not change `updated_at`; newly pinned sessions append to the pinned order, and unpinning compacts the remaining order.
+For session recency, `sessions.updated_at` represents both prompt activity and explicit client-side view/touch events. The sessions table also stores `attention_status`, a CHECK-constrained enum of `clear`, `ready`, or `error`, plus durable `pinned` and `pinned_order` metadata. Active-turn state and view presence remain transient server state; the API combines them with the durable enum to return `activityStatus` as `active`, `ready`, `error`, `on`, or `off`. Pinning and pinned reordering do not change `updated_at`; newly pinned sessions append to the pinned order, and unpinning compacts the remaining order.
+
+## Application database schema
+
+The application database is created by `RookDatastore`, `SqliteSessionRepository`, and `EnvironmentDecisionRepository` in the same SQLite file:
+
+### `sessions`
+
+- `session_id TEXT PRIMARY KEY`
+- `runtime_id TEXT NOT NULL`
+- `runtime_session_id TEXT NOT NULL`
+- `title TEXT NOT NULL`
+- `cwd TEXT NOT NULL`
+- `started_at TEXT NOT NULL`
+- `updated_at TEXT NOT NULL`
+- `attention_status TEXT NOT NULL` — `clear`, `ready`, or `error`
+- `pinned INTEGER NOT NULL` — `0` or `1`
+- `pinned_order INTEGER NOT NULL`
+- unique `(runtime_id, runtime_session_id)`
+
+### `session_environments`
+
+- `session_id TEXT NOT NULL` — cascading foreign key to `sessions`
+- `environment_id TEXT NOT NULL`
+- `entered_at TEXT NOT NULL`
+- primary key `(session_id, environment_id)`
+
+### `environment_decisions`
+
+- `bundle_hash TEXT PRIMARY KEY`
+- `environment_id TEXT NOT NULL`
+- `bundle_id TEXT NOT NULL`
+- `decision TEXT NOT NULL` — `approve` or `reject`
+- `updated_at TEXT NOT NULL`
+
+Only permanent decisions are stored here. Session-scoped `accept` and `ignore` decisions are held in `SessionDecisionRegistry` memory and expire on session/environment lifecycle events.
 
 ## Environment repository schema
 
@@ -78,7 +113,7 @@ is the only web writer.
   them, and projects them into the bundle-facing `EnvironmentBundle` model.
 - `WebEnvironmentRepository` is a thin SQLite repository specialization for metadata-backed
   scout state, host guards, read-only public writes, and transactional `recordScout` updates.
-- `CompositeEnvironmentRepository` combines canonical, personal, project-directory, synthetic, and web repositories, in that order.
+- `CompositeEnvironmentRepository` combines canonical, personal, project-directory, synthetic, and web repositories, in that order; the live synthetic source is `LocationContextRepository`.
 - `EnvironmentRepositoryService` resolves bundles, calculates atomic bundle hashes, exposes search/preview, and routes capability write/delete/restore operations.
 
 The API remains bundle-oriented even though storage is capability-oriented. Instructions and `llms.txt` are projected into `agentsMd` and `llmsTxt`; skills, facts, MCP, and apps are projected into their corresponding collections.
@@ -96,6 +131,8 @@ Writable personal content is materialized once per environment:
 ├── AGENTS.md
 └── .agents/skills/<skill-name>/
 ```
+
+The default personal repository database is `~/.rook/environment-repository.db`, independent of `ROOK_HOME`; `ROOK_PERSONAL_ENVIRONMENT_REPOSITORY_DB` can point it at a profile-specific file. The canonical repository defaults to `<checkout>/environment-repository.db`.
 
 Each session receives disposable links:
 
