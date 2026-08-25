@@ -126,10 +126,10 @@ export class CapabilityWorkspaceManager {
       const nickname = nicknames.get(environmentId)!;
       const skillNames = skillNamesByEnvironment.get(nickname) ?? new Set<string>();
       skillNamesByEnvironment.set(nickname, skillNames);
-      if (entry.bundle.repository === "personal" || entry.bundle.repository === "project-directory") {
+      if (entry.editable && (entry.bundle.repository === "personal" || entry.bundle.repository === "project-directory")) {
         await this.ensureAuthoringRoot(entry);
       }
-      if (entry.bundle.repository === "personal") {
+      if (entry.bundle.repository === "personal" && entry.editable) {
         const personalRoot = personalEnvironmentPath(this.workspaceRoot, entry);
         await mkdir(path.join(personalRoot, ".agents", "skills"), { recursive: true });
         await replaceWithSymlink(

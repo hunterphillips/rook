@@ -61,7 +61,8 @@
 - `reorderPinnedSessions(sessionIds:)` — replaces the durable pinned-session order over REST
 - `environmentPreview(environmentId:)`
 - `registerEnvironment(candidate)`
-- bundle/environment preview payloads preserve repository identity and derived bundle hashes for review and revalidation UI
+- bundle/environment preview payloads preserve repository identity, publisher,
+  `scoutPublished` origin, and derived bundle hashes for review and revalidation UI
 - `identifyEnvironments(_:)`
 - `registerLocation(_:)`
 - `decideEnvironment(...)`

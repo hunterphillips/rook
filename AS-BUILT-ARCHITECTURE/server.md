@@ -24,15 +24,13 @@ The server is a Fastify service on `127.0.0.1:7665` for the main checkout, with 
 - `environments/services/EnvironmentRepositoryService`
   - resolves environment bundles from repo-backed repositories and canonical content hashes
 - `environments/repositories/SQLiteEnvironmentRepository`
-  - stores repository-scoped capability content and bundle memberships; personal and web
-    instances share one user-local datastore
+  - serves canonical or personal SQLite content; the personal instance projects user and
+    site bundles from one environment row and exposes publisher provenance
 - `environments/repositories/ProjectDirectoryEnvironmentRepository`
   - reads project-owned `.agents/skills`, `AGENTS.md`, `CLAUDE.md`, and `.mcp.json` files in place
-- `environments/repositories/WebEnvironmentRepository`
-  - thin read-only `web` specialization over the shared user-local datastore; serves the
-    `web:<host>#site` bundle and keeps scout state in the environment metadata
-  - `recordScout` is the only writer; no web-specific schema; last in the composite repository
-- `environments/services/WebEnvironmentScout` and `WebScoutTrigger`
+- `environments/services/WebEnvironmentScoutStore`, `WebEnvironmentScout`, and `WebScoutTrigger`
+  - the store writes only the host publisher's memberships and namespaced scout metadata;
+    it is not an entry in `CompositeEnvironmentRepository`
   - the scout fetches `/llms.txt`, `/AGENTS.md`, and `/.well-known/agent-skills/index.json` (plus each listed `skill-md`) for one host through the guarded fetch helper, with per-host in-flight dedupe, a 24 h TTL (15 min after a failure), and conditional requests
   - the trigger runs after `POST /api/environments/register` for `web:<host>` candidates: scout, then re-register the candidate when the stored content changed so summaries and offers refresh
 - `infrastructure/http/guardedFetch` and `ipAddressPolicy`
@@ -143,7 +141,7 @@ Current durable persistence is SQLite-backed and split between:
 
 - the application database: session records, session-environment membership, and durable environment decisions
 - runtime-owned ACP session files: conversation history and replay source
-- the environment repository databases: environments, reusable capabilities, and bundle memberships; the user-local database contains discriminator-scoped personal and web rows, with web scout state in environment metadata
+- the environment repository databases: environments, reusable capabilities, and bundle memberships; the user-local database has one row per environment, with publisher-scoped user/site bundles and web scout state in environment metadata
 
 Canonical, personal, and scouted web environment-repository content is SQLite-only. Project-directory environments remain the intentional direct file-backed exception, and location-context bundles are an in-memory synthetic repository backed by a generated skill directory. The global workspace is an inspectable projection, never durable storage. Deterministic personal authoring bundles are recreated from entered non-directory memberships independently of live observation status. By default, a development profile isolates the application database and workspaces but shares the personal repository database with the production profile unless the personal database override is supplied.
 

@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import type { GuardedFetchOptions, GuardedFetchResult } from "../../infrastructure/http/guardedFetch.js";
 import { EnvironmentRepositoryDatastore } from "../datastores/EnvironmentRepositoryDatastore.js";
-import { WebEnvironmentRepository } from "../repositories/WebEnvironmentRepository.js";
+import { SQLiteEnvironmentRepository } from "../repositories/SQLiteEnvironmentRepository.js";
 import { WebEnvironmentScout, type WebEnvironmentScoutOptions } from "./WebEnvironmentScout.js";
+import { WebEnvironmentScoutStore } from "./WebEnvironmentScoutStore.js";
 
 const HOST = "example.com";
 const ENVIRONMENT_ID = `web:${HOST}`;
@@ -75,10 +76,13 @@ describe("WebEnvironmentScout", () => {
     datastores.length = 0;
   });
 
-  function openRepository(): WebEnvironmentRepository {
+  function openRepository(): WebEnvironmentScoutStore & Pick<SQLiteEnvironmentRepository, "getBundles"> {
     const datastore = new EnvironmentRepositoryDatastore(":memory:");
     datastores.push(datastore);
-    return new WebEnvironmentRepository(datastore);
+    const projection = new SQLiteEnvironmentRepository(datastore, "personal");
+    return Object.assign(new WebEnvironmentScoutStore(datastore, projection), {
+      getBundles: projection.getBundles.bind(projection),
+    });
   }
 
   /** A scout wired to a mutable route table, plus the call log and a movable clock. */
@@ -118,7 +122,9 @@ describe("WebEnvironmentScout", () => {
     expect(loaded.bundles[0]).toMatchObject({
       id: `${ENVIRONMENT_ID}#site`,
       bundleId: "site",
-      repository: "web",
+      repository: "personal",
+      publisher: HOST,
+      scoutPublished: true,
       sourceUrl: `https://${HOST}/`,
       llmsTxt: "# Widgets\nSee the docs.",
       agentsMd: "Confirm before ordering.",

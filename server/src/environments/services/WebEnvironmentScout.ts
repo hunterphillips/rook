@@ -5,15 +5,15 @@ import {
   normalizeHost,
   WEB_BUNDLE_ID,
   webEnvironmentIdForHost,
-  type WebEnvironmentRepository,
+  type WebEnvironmentScoutStore,
   type WebScoutStatus,
   type WebScoutValidators,
-} from "../repositories/WebEnvironmentRepository.js";
+} from "./WebEnvironmentScoutStore.js";
 import { parseAgentSkillsDiscoveryIndex, type DiscoverySkillEntry } from "./agentSkillsDiscoveryIndex.js";
 
 /**
  * Probes a website for the agent-facing resources it publishes and records the result
- * through `WebEnvironmentRepository`, which is the only writer into the web store.
+ * through `WebEnvironmentScoutStore`, which is the only writer for host-published rows.
  *
  * One pass fetches `/llms.txt`, `/AGENTS.md`, and the Agent Skills discovery index
  * concurrently (conditionally, when the store holds validators), fetches and
@@ -26,7 +26,7 @@ import { parseAgentSkillsDiscoveryIndex, type DiscoverySkillEntry } from "./agen
  * TTL check answers whether the stored entry is still fresh.
  */
 
-const WEB_REPOSITORY_ID = "web";
+const WEB_REPOSITORY_ID = "personal";
 const DAY_MS = 24 * 60 * 60_000;
 
 /** Store keys for the three host-rooted resources, and the paths they are fetched from. */
@@ -66,7 +66,7 @@ export interface WebScoutLogger {
 export type GuardedFetcher = (url: string, options: GuardedFetchOptions) => Promise<GuardedFetchResult>;
 
 export interface WebEnvironmentScoutOptions {
-  repository: WebEnvironmentRepository;
+  repository: WebEnvironmentScoutStore;
   /** Injectable for tests; defaults to the guarded fetch helper. */
   fetch?: GuardedFetcher;
   now?: () => number;
@@ -95,7 +95,7 @@ interface ScoutPass {
 }
 
 export class WebEnvironmentScout {
-  private readonly repository: WebEnvironmentRepository;
+  private readonly repository: WebEnvironmentScoutStore;
   private readonly fetch: GuardedFetcher;
   private readonly now: () => number;
   private readonly logger: WebScoutLogger;
@@ -252,8 +252,7 @@ export class WebEnvironmentScout {
   /** The host's currently stored bundle, read at most once per pass. */
   private async storedBundle(environmentId: string, scouted: boolean): Promise<EnvironmentBundle | null> {
     if (!scouted) return null;
-    const result = await this.repository.getBundles(environmentId);
-    return result.bundles[0] ?? null;
+    return this.repository.getScoutedBundle(environmentId.slice("web:".length));
   }
 
   private interpretText(

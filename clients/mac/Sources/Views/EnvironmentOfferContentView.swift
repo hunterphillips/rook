@@ -66,6 +66,9 @@ struct BundleContentPreviewCard: View {
     }
 
     private var sourceLine: String {
+        if let bundle = model.offerPreviewBundle, bundle.scoutPublished == true, let publisher = bundle.publisher {
+            return "Source: \(publisher) · \(offer.environmentId) · read-only"
+        }
         if let repository = model.offerPreviewBundle?.repository {
             return "Source: \(repository) · \(offer.environmentId)"
         }

@@ -8,12 +8,13 @@ import type { CandidateEnvironmentRecord } from "../../shared/environment.js";
 import { EnvironmentRepositoryDatastore } from "../datastores/EnvironmentRepositoryDatastore.js";
 import { CompositeEnvironmentRepository } from "../repositories/CompositeEnvironmentRepository.js";
 import { EnvironmentDecisionRepository } from "../repositories/EnvironmentDecisionRepository.js";
-import { WebEnvironmentRepository } from "../repositories/WebEnvironmentRepository.js";
+import { SQLiteEnvironmentRepository } from "../repositories/SQLiteEnvironmentRepository.js";
 import type { EnvironmentEventListener } from "../support/types.js";
 import { EnvironmentManager } from "./EnvironmentManager.js";
 import { EnvironmentRepositoryService } from "./EnvironmentRepositoryService.js";
 import { JsonlEnvironmentMetadataCaptureSink } from "./environmentMetadataCapture.js";
 import { WebEnvironmentScout, type WebScoutOutcome } from "./WebEnvironmentScout.js";
+import { WebEnvironmentScoutStore } from "./WebEnvironmentScoutStore.js";
 import { WebScoutTrigger } from "./WebScoutTrigger.js";
 
 const HOST = "example.com";
@@ -150,8 +151,9 @@ describe("WebScoutTrigger with EnvironmentManager", () => {
   }
 
   function harness(routes: Record<string, GuardedFetchResult>) {
-    const webRepository = new WebEnvironmentRepository(datastore);
-    const repositoryService = new EnvironmentRepositoryService(new CompositeEnvironmentRepository([webRepository]));
+    const personalRepository = new SQLiteEnvironmentRepository(datastore, "personal");
+    const scoutStore = new WebEnvironmentScoutStore(datastore, personalRepository);
+    const repositoryService = new EnvironmentRepositoryService(new CompositeEnvironmentRepository([personalRepository]));
     manager = new EnvironmentManager(repositoryService, decisions, {
       activeEnvironmentWindowMs: 6 * 60_000,
       recentEnvironmentRetentionMs: 30 * 60_000,
@@ -161,7 +163,7 @@ describe("WebScoutTrigger with EnvironmentManager", () => {
     });
     const fetchCalls: string[] = [];
     const scout = new WebEnvironmentScout({
-      repository: webRepository,
+      repository: scoutStore,
       now: () => nowMs,
       fetch: async (url) => {
         fetchCalls.push(url);
@@ -191,7 +193,9 @@ describe("WebScoutTrigger with EnvironmentManager", () => {
     const preview = await manager.getEnvironmentPreview(CANDIDATE.id);
     expect(preview.bundles).toHaveLength(1);
     expect(preview.bundles[0]).toMatchObject({
-      repository: "web",
+      repository: "personal",
+      publisher: HOST,
+      scoutPublished: true,
       bundleId: "site",
       llmsTxt: "# Example\nRead the docs.",
       agentsMd: "Be brief.",

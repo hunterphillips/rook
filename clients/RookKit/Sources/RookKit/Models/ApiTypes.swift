@@ -255,6 +255,8 @@ public struct EnvironmentBundlePreview: Codable, Equatable, Identifiable {
     public let bundleId: String
     public let environmentId: String
     public let repository: String
+    public let publisher: String?
+    public let scoutPublished: Bool?
     public let valid: Bool
     public let bundleHash: String
     public let skills: [EnvironmentArtifactPreview]
@@ -265,11 +267,13 @@ public struct EnvironmentBundlePreview: Codable, Equatable, Identifiable {
     public let agentsMd: String?
     public let errors: [RepositoryReadError]
 
-    public init(id: String, bundleId: String, environmentId: String, repository: String, valid: Bool, bundleHash: String, skills: [EnvironmentArtifactPreview], mcpServers: [EnvironmentArtifactPreview], apps: [EnvironmentArtifactPreview], errors: [RepositoryReadError], facts: [EnvironmentArtifactPreview] = [], llmsTxt: String? = nil, agentsMd: String? = nil) {
+    public init(id: String, bundleId: String, environmentId: String, repository: String, publisher: String? = nil, scoutPublished: Bool? = nil, valid: Bool, bundleHash: String, skills: [EnvironmentArtifactPreview], mcpServers: [EnvironmentArtifactPreview], apps: [EnvironmentArtifactPreview], errors: [RepositoryReadError], facts: [EnvironmentArtifactPreview] = [], llmsTxt: String? = nil, agentsMd: String? = nil) {
         self.id = id
         self.bundleId = bundleId
         self.environmentId = environmentId
         self.repository = repository
+        self.publisher = publisher
+        self.scoutPublished = scoutPublished
         self.valid = valid
         self.bundleHash = bundleHash
         self.skills = skills

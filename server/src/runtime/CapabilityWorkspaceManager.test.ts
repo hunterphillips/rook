@@ -94,6 +94,25 @@ describe("CapabilityWorkspaceManager", () => {
     await manager.close();
   });
 
+  it("materializes scout-published personal repository content without an authoring source", async () => {
+    const manager = await CapabilityWorkspaceManager.create({ workspaceRoot: await temporaryDirectory(), sessionRoot: await temporaryDirectory() });
+    const bundle = personalBundle({ skills: [skill("site-skill")], agentsMd: "Site instructions." });
+    bundle.bundleName = "Environment capabilities";
+    bundle.editable = false;
+    delete bundle.writeBackSkill;
+    delete bundle.writeBackNewSkill;
+    delete bundle.writeBackInstructions;
+    bundle.bundle.publisher = "mail.example";
+    bundle.bundle.scoutPublished = true;
+
+    const workspace = await manager.materialize("session", [bundle]);
+
+    expect((await lstat(path.join(workspace.skillsRoot, "site-skill"))).isSymbolicLink()).toBe(false);
+    await expect(access(path.join(workspace.editablePerEnvironmentRoot, "mail"))).rejects.toThrow();
+    expect(await readFile(path.join(workspace.skillsRoot, "site-skill", "SKILL.md"), "utf8")).toBe("site-skill");
+    await manager.close();
+  });
+
   it("aliases the projection for Claude runtimes via .claude/skills and CLAUDE.md links", async () => {
     const manager = await CapabilityWorkspaceManager.create({ workspaceRoot: await temporaryDirectory(), sessionRoot: await temporaryDirectory() });
     const workspace = await manager.materialize("session", [personalBundle({ skills: [skill("remember")], agentsMd: "Remember this." })]);

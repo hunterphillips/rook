@@ -10,7 +10,7 @@ import { CompositeEnvironmentRepository } from "./environments/repositories/Comp
 import { SQLiteEnvironmentRepository } from "./environments/repositories/SQLiteEnvironmentRepository.js";
 import { ProjectDirectoryEnvironmentRepository } from "./environments/repositories/ProjectDirectoryEnvironmentRepository.js";
 import { LocationContextRepository } from "./environments/repositories/LocationContextRepository.js";
-import { WebEnvironmentRepository } from "./environments/repositories/WebEnvironmentRepository.js";
+import { WebEnvironmentScoutStore } from "./environments/services/WebEnvironmentScoutStore.js";
 import { EnvironmentRepositoryDatastore } from "./environments/datastores/EnvironmentRepositoryDatastore.js";
 import { EnvironmentRepositoryService } from "./environments/services/EnvironmentRepositoryService.js";
 import { WebEnvironmentScout, type GuardedFetcher } from "./environments/services/WebEnvironmentScout.js";
@@ -103,13 +103,12 @@ export async function buildServer(options: BuildServerOptions = {}) {
   const canonicalEnvironmentRepository = new SQLiteEnvironmentRepository(environmentRepositoryDatabase, "canonical");
   const personalEnvironmentDatastore = new EnvironmentRepositoryDatastore(personalEnvironmentRepositoryDatabase);
   const personalEnvironmentRepository = new SQLiteEnvironmentRepository(personalEnvironmentDatastore, "personal");
-  const webEnvironmentRepository = new WebEnvironmentRepository(personalEnvironmentDatastore);
+  const webEnvironmentScoutStore = new WebEnvironmentScoutStore(personalEnvironmentDatastore, personalEnvironmentRepository);
   const environmentRepository = new CompositeEnvironmentRepository([
     canonicalEnvironmentRepository,
     personalEnvironmentRepository,
     new ProjectDirectoryEnvironmentRepository(),
     locationContextRepository,
-    webEnvironmentRepository,
   ]);
   const environmentRepositoryService = new EnvironmentRepositoryService(environmentRepository);
   const datastore = new RookDatastore(options.environmentDecisionStoreLocation);
@@ -137,7 +136,7 @@ export async function buildServer(options: BuildServerOptions = {}) {
   const webScoutTrigger = webScoutEnabled
     ? new WebScoutTrigger({
       scout: new WebEnvironmentScout({
-        repository: webEnvironmentRepository,
+        repository: webEnvironmentScoutStore,
         logger: app.log,
         fetch: options.webScout?.fetch,
         ttlMs: webScoutTtlMs,
@@ -165,7 +164,6 @@ export async function buildServer(options: BuildServerOptions = {}) {
     await workspaceManager.close();
     canonicalEnvironmentRepository.close();
     personalEnvironmentRepository.close();
-    webEnvironmentRepository.close();
     personalEnvironmentDatastore.close();
     datastore.close();
   });

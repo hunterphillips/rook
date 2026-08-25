@@ -9,7 +9,7 @@ When Rook is in a `web:<host>` environment it only knows what someone has alread
 in the repository by hand. The repository, approval, and materialization machinery can
 already represent and load everything a website might publish; nothing fetches it.
 This change adds the fetcher: a scout that probes a website for agent-facing resources
-and a read-only repository that serves the result through the normal offer → approve
+and stores host-published bundles in the user's repository for the normal offer → approve
 → materialize flow. It is the first concrete slice of #64.
 
 ## Decision details
@@ -24,20 +24,20 @@ and a read-only repository that serves the result through the normal offer → a
   `<name>/SKILL.md`); `archive` entries and entries whose digest fails are skipped
   and reported in the bundle's `errors`. Path-scoped ids
   (`web:host/path`) are not scouted. MCP is out of scope (#3, #107).
-- **Shape.** Thin `WebEnvironmentRepository` specialization (`repositoryId: "web"`,
-  read-only) serving from a persistent store filled
-  by a `WebEnvironmentScout`. One synthesized bundle per host: `bundleId: "site"`,
-  `id: "<envId>#site"`, `repository: "web"`, `publisher: <host>`, `editable` unset so
-  materialization takes the read-only path. A host that was scouted and found
-  empty is remembered but yields no environment record and no bundles; an unknown host
-  yields nothing.
+- **Shape.** One personal `SQLiteEnvironmentRepository` serves both user- and
+  host-published bundles from one `web:<host>` environment row. The scout writes one
+  synthesized bundle per host: `bundleId: "site"`, `id: "<envId>#site"`,
+  `repository: "personal"`, `publisher: <host>`, and projected
+  `scoutPublished: true`. The explicit origin flag keeps it approval-gated and read-only.
+  A contentless host keeps metadata for negative caching but is excluded from listing/search.
 - **Trigger and persistence.** Scouting starts when a `web:` candidate is registered
   (`POST /api/environments/register`, already fire-and-forget). `getBundles` never does
   network I/O; it reads a **persistent SQLite store** so scouted capabilities survive
-  restarts and are available offline and to search. Web rows share the personal
-  `<ROOK_HOME>/environment-repository.db`, with repository-scoped environment and bundle
-  rows. Per-host `fetched_at`, status, errors, and resource `etag`/`last_modified`
-  validators live under the web environment's `metadata_json.scout`. Refresh policy: on
+  restarts and are available offline and to search. Web rows use the personal
+  `<ROOK_HOME>/environment-repository.db` with the main schema: one environment row per
+  id and no repository column. Per-host `fetched_at`, status, errors, and resource
+  `etag`/`last_modified` validators live under that row's `metadata_json.scout`.
+  Host publisher scope ensures a refresh cannot change user publishers. Refresh policy: on
   registration, if the host's entry is older than the TTL (default 24 h, env override)
   re-scout in the background using conditional requests (`If-None-Match` /
   `If-Modified-Since`); if content changed, replace the bundle rows (new hash → new
@@ -84,19 +84,18 @@ and a read-only repository that serves the result through the normal offer → a
       helper above, injectable `fetch`, typed result (`ok | absent | error`), unit tests
       for timeout, size cap, redirect limit, private-address refusal, HTTPS-only.
 - [x] Persistent store: the personal `<ROOK_HOME>/environment-repository.db` opened once
-      and shared by personal and web repository projections; discriminator-scoped
-      environments and memberships plus metadata-backed per-host scout state; ingest /
-      replace bundle rows for a host; read side for `getBundles`; staleness query.
+      with one environment row per id; publisher-scoped host memberships plus
+      metadata-backed per-host scout state; ingest / replace only one host publisher;
+      normal personal-repository reads; staleness query.
 - [x] `WebEnvironmentScout` in `server/src/environments/`: given a host, fetch the
       three resources (conditional requests when the store has validators), parse the
       discovery index (schema check, field validation, `skill-md` only, digest
       verification), assemble capability file maps and `errors`, write to the store;
       per-host in-flight dedupe; negative entries; `scout(host)` returns whether the
       stored result changed.
-- [x] `WebEnvironmentRepository`: `getBundles(environmentId)` for `web:<host>` ids
-      served from the store; `listEnvironments`/`searchBundles` over stored hosts;
-      writes remain no-op. Wire into `CompositeEnvironmentRepository` in
-      `server/src/index.ts` after `location-context`.
+- [x] `WebEnvironmentScoutStore`: scout-state accessors, host guards, and transactional
+      `recordScout` only. It collaborates with the personal repository and is not wired
+      into `CompositeEnvironmentRepository`.
 - [x] Trigger: hook `web:` candidate registration to `scout(host)` when the host is
       unknown or stale (in the register route or a thin wrapper around
       `registerCandidateEnvironment`) and re-register the candidate when the result
@@ -122,7 +121,7 @@ and a read-only repository that serves the result through the normal offer → a
       "publish for Rook" note for site owners in `PRODUCT/environment-repository.md`.
 - [x] Manual verification (developer-driven): open a browser tab on a site that
       publishes at least one of the three resources; confirm the environment shows
-      the `web` bundle, the offer appears on entry **with the content visible in the
+      the site-published bundle, the offer appears on entry **with the content visible in the
       preview**, approval materializes the content read-only into the session
       workspace, the agent can use it, and after a server restart the site is still
       known without a re-fetch.
@@ -139,3 +138,22 @@ and a read-only repository that serves the result through the normal offer → a
       environment keys allow both sources for the same website; scout state is stored in
       `metadata_json`; contentless negative-cache rows are excluded from list/search; no
       web-only tables, path, configuration override, or web-database migration remain.
+
+## Review round 2 (2026-08-25)
+
+This round supersedes round 1's repository-discriminator storage design, following the
+maintainer's direction to use the existing bundle publisher.
+
+- [x] Restore `EnvironmentRepositoryDatastore` byte-for-byte to the `origin/main` schema:
+      `environment_id` is the environment primary key, bundles use
+      `(bundle_id, capability_id)`, and there is no repository column or migration.
+- [x] Serve user and site content through the single personal SQLite repository; remove
+      the web repository from the composite and replace it with a scout-only store.
+- [x] Scope every scout replacement/deletion/fingerprint to
+      `environment_id + publisher = host` and preserve all other publishers.
+- [x] Preserve user-authored display name, description, and metadata while updating
+      namespaced scout state transactionally.
+- [x] Project `publisher` and `scoutPublished` so manager authorization, workspace
+      editability, and Mac offer labeling remain correct without a `web` repository id.
+- [x] Retarget tests to publisher isolation, same-environment coexistence, read-only site
+      bundles, display-name preservation, and contentless-row filtering; remove migration tests.

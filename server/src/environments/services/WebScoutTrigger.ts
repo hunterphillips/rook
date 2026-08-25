@@ -1,5 +1,5 @@
 import type { CandidateEnvironmentRecord } from "../../shared/environment.js";
-import { hostForWebEnvironmentId } from "../repositories/WebEnvironmentRepository.js";
+import { hostForWebEnvironmentId } from "./WebEnvironmentScoutStore.js";
 import type { EnvironmentManager } from "./EnvironmentManager.js";
 import type { WebEnvironmentScout, WebScoutLogger } from "./WebEnvironmentScout.js";
 

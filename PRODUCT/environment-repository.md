@@ -6,9 +6,9 @@ Rook's environment repository maps recognizable environments to capability bundl
 
 Environment-repository SQLite storage uses three tables:
 
-- `environments` — repository-scoped environment identity, display metadata, and source-specific metadata.
+- `environments` — one row per environment id, with display and source-specific metadata.
 - `capabilities` — reusable capability content and a content hash.
-- `bundles` — repository-scoped membership rows joining a bundle, environment, and capability.
+- `bundles` — membership rows joining a bundle, environment, and capability, with publisher provenance.
 
 A capability is stored in one uniform nested file-map format. A skill stores its complete directory, including `SKILL.md`, scripts, references, and assets. `AGENTS.md`, `llms.txt`, facts, MCP content, and app content use the same representation.
 
@@ -16,9 +16,11 @@ Capabilities use UUID `TEXT` identifiers and may be referenced by bundle members
 
 `deleted_at` belongs to a bundle membership, not the shared capability row. Deleting a writable capability from one environment leaves the capability content available to other memberships. Restoration clears the membership timestamp.
 
-The canonical repository uses the checkout database. Personal and web repository instances
-share the user-local `environment-repository.db` and are isolated by the `repository`
-discriminator on environments and bundle memberships:
+The canonical repository uses the checkout database. The user-local
+`environment-repository.db` has one environment row per id. User and website content
+coexist as bundles on that row, distinguished only by `publisher`: the scout publishes as
+the normalized host, while existing personal paths keep writing their current publisher
+(normally `default`).
 
 - canonical content is read-only and externally curated;
 - personal content is writable and does not require approval;
@@ -57,11 +59,12 @@ The server exposes:
 
 ```text
 GET  /api/environments/search?query=...
-GET  /api/bundles/search?query=...&repository=canonical|personal|project-directory|web
+GET  /api/bundles/search?query=...&repository=canonical|personal|project-directory
 GET  /api/environments/preview?environmentId=...
 ```
 
-Previews expose the bundle hash, active capability content, and repository identity. Revision metadata is not part of the API.
+Previews expose the bundle hash, active capability content, repository identity, publisher,
+and the derived `scoutPublished` flag. Revision metadata is not part of the API.
 
 ## Runtime workspace projection
 
@@ -86,27 +89,34 @@ Each session receives disposable links:
 
 The root `AGENTS.md` is a generated, read-only aggregate. The linked `.agents/editable-per-environment/<environment>/` directory is the editable source for both instructions and skills. New skills belong under its `.agents/skills/` directory, never directly under the session workspace's `.agents/skills/`.
 
-Canonical content is materialized read-only into the session workspace. Project-directory skills and instructions link directly to project files. The global watcher observes shared personal sources, debounces settled changes, writes current capability content to SQLite, and interprets missing writable source entries as membership soft deletion. Rebuild and cleanup operations are suppressed from deletion inference.
+Canonical and scout-published content is materialized read-only into the session workspace. Project-directory skills and instructions link directly to project files. The global watcher observes user-published personal sources only, debounces settled changes, writes current capability content to SQLite, and interprets missing writable source entries as membership soft deletion. Rebuild and cleanup operations are suppressed from deletion inference.
 
 ## Approval and deletion
 
-Personal capabilities are user-owned and do not require approval. Canonical capabilities remain immutable and require the normal decision flow. Decisions apply to the derived content hash of an atomic bundle; changing active capability content or membership produces a different hash.
+User-published personal capabilities are user-owned and do not require approval.
+Scout-published and canonical capabilities remain immutable and require the normal decision
+flow. Decisions apply to the derived content hash of an atomic bundle; changing active
+capability content or membership produces a different hash.
 
 A writable skill or instruction source can be soft-deleted through its authoring path. The membership remains with a nullable `deleted_at` timestamp, the capability files remain available for restoration, and deleted content is omitted from bundle resolution, search, previews, aggregate instructions, and runtime discovery.
 
 The generated aggregate `AGENTS.md` is never an editable source. Deleting or rebuilding it only causes regeneration and does not delete capability content.
 
-## Web repository
+## Website-published content
 
-When the user is on a `web:<host>` environment, Rook probes the site for the resources it publishes for agents and stores what it finds in the web repository. Three host-rooted URLs are requested:
+When the user is on a `web:<host>` environment, Rook probes the site for the resources it publishes for agents and stores what it finds in the personal environment repository under publisher `<host>`. Three host-rooted URLs are requested:
 
 - `https://<host>/llms.txt` → an `llms-txt` capability;
 - `https://<host>/AGENTS.md` → an `instructions` capability;
 - `https://<host>/.well-known/agent-skills/index.json` → one `skill` capability per `skill-md` entry.
 
-The skills index follows Cloudflare's Agent Skills Discovery RFC (`$schema` `https://schemas.agentskills.io/discovery/0.2.0/schema.json`): a `skills` array of `{name, description, type, url, digest}`. Each `skill-md` entry's `url` is a single `SKILL.md`, which Rook fetches, verifies against the `sha256:` digest, and stores as `<name>/SKILL.md`. `archive` entries are recorded as unsupported; entries that fail validation or their digest are dropped and reported in the bundle's `errors`. Only the host root is probed; `web:<host>/<path>` environments are not scouted, and MCP discovery is not part of the web repository.
+The skills index follows Cloudflare's Agent Skills Discovery RFC (`$schema` `https://schemas.agentskills.io/discovery/0.2.0/schema.json`): a `skills` array of `{name, description, type, url, digest}`. Each `skill-md` entry's `url` is a single `SKILL.md`, which Rook fetches, verifies against the `sha256:` digest, and stores as `<name>/SKILL.md`. `archive` entries are recorded as unsupported; entries that fail validation or their digest are dropped and reported in the bundle's `errors`. Only the host root is probed; `web:<host>/<path>` environments are not scouted, and MCP discovery is not part of website scouting.
 
-Everything found for a host forms one bundle, `web:<host>#site`, with the host as publisher. A site that publishes nothing is remembered as empty so it is not probed again on every visit.
+Everything found for a host forms one bundle, `web:<host>#site`, with the host as publisher.
+A refresh replaces only that publisher's memberships, so user-authored bundles remain in
+the same environment. The scout creates display text only for a new row and otherwise
+changes it only while it remains empty or still has the scout-generated value. A site that
+publishes nothing is remembered as empty so it is not probed again on every visit.
 Scout state (`fetched_at`, status, pass errors, and per-resource ETag/Last-Modified
 validators) is stored under `metadata_json.scout` on the web environment row. Empty and
 failed scouts therefore retain a negative-cache row without creating web-specific tables;
@@ -114,7 +124,7 @@ contentless rows are omitted from environment listings and bundle search.
 
 ### When scouting happens
 
-Scouting starts when a client registers a `web:<host>` environment and runs in the background; reads from the web repository are served from stored rows and never touch the network. A host is fetched again once its entry is older than 24 hours, or 15 minutes after a failed scout. Refreshes use conditional requests, so an unchanged site costs a `304` and produces no new offer. A transient failure never removes content the site already published; a fetched `SKILL.md` that no longer matches its digest is dropped.
+Scouting starts when a client registers a `web:<host>` environment and runs in the background; normal personal-repository reads serve the stored rows and never touch the network. A host is fetched again once its entry is older than 24 hours, or 15 minutes after a failed scout. Refreshes use conditional requests, so an unchanged site costs a `304` and produces no new offer. A transient failure never removes content the site already published; a fetched `SKILL.md` that no longer matches its digest is dropped.
 
 ### Approval
 
@@ -148,7 +158,7 @@ A site owner makes content available to Rook by serving any of the three URLs ab
 ## Deferred work
 
 - publishing, sharing, and signed publishers;
-- `archive` skills, MCP discovery, and per-skill provenance in the web repository;
+- `archive` skills, MCP discovery, and per-skill provenance for website content;
 - capability-level approval or dependency graphs;
 - conflict merging for concurrent personal edits;
 - MCP startup and lifecycle;

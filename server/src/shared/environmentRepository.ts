@@ -39,6 +39,10 @@ export interface EnvironmentBundle {
   bundleId: string;
   environmentId: string;
   repository: string;
+  /** Bundle publisher stored in the repository (`default` for existing user content). */
+  publisher?: string;
+  /** True when a website scout, rather than the user, published this bundle. */
+  scoutPublished?: boolean;
   /** Path to the bundle directory/root when one exists on disk (or an equivalent synthesized bundle root). */
   bundlePath?: string;
   /** URL the content was fetched from, when the bundle is web-sourced. */

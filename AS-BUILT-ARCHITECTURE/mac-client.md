@@ -21,6 +21,8 @@ The macOS client is a native SwiftUI menu bar app with a regular app window. It 
   - renders the environment-memory list
 - `BundleContentPreviewCard`
   - shows the offered bundle's actual content (`AGENTS.md`, `llms.txt`, each skill's `SKILL.md`, MCP/app files, repository read errors) inside the offer detail before the decision buttons
+  - labels scout-published content by host publisher and as read-only instead of presenting
+    its backing personal repository as user ownership
 - `AcpSocket` and `RookAPI` from `RookKit`
   - ACP WebSocket transport and REST client
 - `ForegroundAppMonitor`

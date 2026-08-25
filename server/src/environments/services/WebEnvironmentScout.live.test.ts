@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from "vitest";
 import { EnvironmentRepositoryDatastore } from "../datastores/EnvironmentRepositoryDatastore.js";
-import { WebEnvironmentRepository, webEnvironmentIdForHost } from "../repositories/WebEnvironmentRepository.js";
+import { SQLiteEnvironmentRepository } from "../repositories/SQLiteEnvironmentRepository.js";
 import { WebEnvironmentScout } from "./WebEnvironmentScout.js";
+import { WebEnvironmentScoutStore, webEnvironmentIdForHost } from "./WebEnvironmentScoutStore.js";
 
 /**
  * Live scouting of real public sites through the real guarded fetch. Gated behind
@@ -24,12 +25,13 @@ describe.runIf(LIVE)("WebEnvironmentScout (live)", () => {
   function harness() {
     const datastore = new EnvironmentRepositoryDatastore(":memory:");
     datastores.push(datastore);
-    const repository = new WebEnvironmentRepository(datastore);
-    return { repository, scout: new WebEnvironmentScout({ repository }) };
+    const repository = new SQLiteEnvironmentRepository(datastore, "personal");
+    const store = new WebEnvironmentScoutStore(datastore, repository);
+    return { repository, store, scout: new WebEnvironmentScout({ repository: store }) };
   }
 
   it("scouts evilmartians.com: llms.txt plus skill-md skills, with archive entries reported", async () => {
-    const { repository, scout } = harness();
+    const { repository, store, scout } = harness();
     const host = "evilmartians.com";
 
     expect(await scout.scout(host)).toEqual({ status: "scouted", changed: true, result: "content" });
@@ -42,7 +44,7 @@ describe.runIf(LIVE)("WebEnvironmentScout (live)", () => {
       expect(skill.files[`${skill.id}/SKILL.md`]).toBeTruthy();
     }
     // The site publishes `archive` entries alongside `skill-md`; those are skipped and reported.
-    const codes = repository.getScoutState(host)?.errors.map((error) => error.code) ?? [];
+    const codes = store.getScoutState(host)?.errors.map((error) => error.code) ?? [];
     expect(codes).toContain("unsupported_capability");
   }, 30_000);
 

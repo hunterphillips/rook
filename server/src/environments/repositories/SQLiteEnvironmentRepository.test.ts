@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { EnvironmentRepositoryDatastore } from "../datastores/EnvironmentRepositoryDatastore.js";
 import { CompositeEnvironmentRepository } from "./CompositeEnvironmentRepository.js";
 import { SQLiteEnvironmentRepository } from "./SQLiteEnvironmentRepository.js";
@@ -233,54 +232,4 @@ describe("SQLiteEnvironmentRepository", () => {
     expect(loaded.bundles.map((bundle) => bundle.repository)).toEqual(["canonical", "personal"]);
   });
 
-  it("backfills legacy environment and bundle rows as personal", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "rook-environment-migration-"));
-    tempDirs.push(directory);
-    const location = path.join(directory, "environment-repository.db");
-    const legacy = new DatabaseSync(location);
-    legacy.exec(`
-      PRAGMA foreign_keys = ON;
-      CREATE TABLE environments (
-        environment_id TEXT PRIMARY KEY,
-        display_name TEXT NOT NULL,
-        description TEXT NOT NULL,
-        metadata_json TEXT NOT NULL DEFAULT '{}'
-      );
-      CREATE TABLE capabilities (
-        capability_id TEXT PRIMARY KEY,
-        type TEXT NOT NULL,
-        name TEXT NOT NULL,
-        files_json TEXT NOT NULL,
-        content_hash TEXT NOT NULL
-      );
-      CREATE TABLE bundles (
-        bundle_id TEXT NOT NULL,
-        environment_id TEXT NOT NULL REFERENCES environments(environment_id) ON DELETE CASCADE,
-        capability_id TEXT NOT NULL REFERENCES capabilities(capability_id) ON DELETE CASCADE,
-        publisher TEXT NOT NULL DEFAULT 'default',
-        deleted_at TEXT,
-        PRIMARY KEY (bundle_id, capability_id)
-      );
-      INSERT INTO environments (environment_id, display_name, description)
-      VALUES ('web:legacy.example', 'Legacy', 'Existing personal environment');
-      INSERT INTO capabilities (capability_id, type, name, files_json, content_hash)
-      VALUES ('88888888-8888-4888-8888-888888888888', 'skill', 'legacy-skill', '{"legacy-skill/SKILL.md":"Legacy"}', 'hash');
-      INSERT INTO bundles (bundle_id, environment_id, capability_id)
-      VALUES ('99999999-9999-4999-8999-999999999999', 'web:legacy.example', '88888888-8888-4888-8888-888888888888');
-    `);
-    legacy.close();
-
-    const datastore = new EnvironmentRepositoryDatastore(location);
-    datastores.push(datastore);
-    const personal = new SQLiteEnvironmentRepository(datastore, "personal");
-    const web = new SQLiteEnvironmentRepository(datastore, "web");
-
-    expect(datastore.db.prepare("SELECT repository FROM environments WHERE environment_id = 'web:legacy.example'").get())
-      .toEqual({ repository: "personal" });
-    expect(datastore.db.prepare("SELECT repository FROM bundles WHERE environment_id = 'web:legacy.example'").get())
-      .toEqual({ repository: "personal" });
-    expect((await personal.getBundles("web:legacy.example")).bundles[0]?.skills[0]?.id).toBe("legacy-skill");
-    expect((await web.getBundles("web:legacy.example")).bundles).toEqual([]);
-    expect(datastore.db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-  });
 });

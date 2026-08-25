@@ -192,7 +192,9 @@ final class ApiTypesTests: XCTestCase {
               "id": "web:example.com#site",
               "bundleId": "site",
               "environmentId": "web:example.com",
-              "repository": "web",
+              "repository": "personal",
+              "publisher": "example.com",
+              "scoutPublished": true,
               "valid": true,
               "bundleHash": "hash-1",
               "skills": [
@@ -211,7 +213,7 @@ final class ApiTypesTests: XCTestCase {
                 {
                   "code": "unreachable_url",
                   "message": "digest mismatch",
-                  "repository": "web",
+                  "repository": "personal",
                   "environmentId": "web:example.com",
                   "bundleId": "site",
                   "url": "https://example.com/skills/broken/SKILL.md"
@@ -224,6 +226,8 @@ final class ApiTypesTests: XCTestCase {
         let preview = try JSONDecoder().decode(EnvironmentPreview.self, from: Data(json.utf8))
         let bundle = try XCTUnwrap(preview.bundles.first)
         XCTAssertEqual(bundle.agentsMd, "# Agents\nBe careful.")
+        XCTAssertEqual(bundle.publisher, "example.com")
+        XCTAssertEqual(bundle.scoutPublished, true)
         XCTAssertEqual(bundle.llmsTxt, "# Example\nllms")
         XCTAssertEqual(bundle.skillMarkdown.map(\.id), ["deploy"])
         XCTAssertEqual(bundle.skillMarkdown.first?.content, "# Deploy\nRun the deploy.")
