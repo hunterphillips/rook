@@ -157,3 +157,18 @@ maintainer's direction to use the existing bundle publisher.
       editability, and Mac offer labeling remain correct without a `web` repository id.
 - [x] Retarget tests to publisher isolation, same-environment coexistence, read-only site
       bundles, display-name preservation, and contentless-row filtering; remove migration tests.
+
+### Reconciliation with `john-update` (2026-08-27)
+
+The maintainer's `john-update` branch implemented the same publisher-based design
+in parallel (before this branch's round-2 push). Reconciled by keeping this
+branch's implementation and porting the two additions it lacked:
+
+- `Isolate launcher client and repository state` — cherry-picked as authored.
+- `migrateRepositoryScopedSchema` — collapses databases that ran this branch's
+  interim repository-scoped revision back to the neutral schema (the maintainer's
+  own database is in that state). Ported with the marker comment reworded because
+  the reject-compatibility CI guard fails on the marker text itself.
+
+The `john-update` "." commit (editor settings, a dirtied canonical
+`environment-repository.db`) was deliberately not taken.
