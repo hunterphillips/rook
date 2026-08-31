@@ -172,3 +172,21 @@ branch's implementation and porting the two additions it lacked:
 
 The `john-update` "." commit (editor settings, a dirtied canonical
 `environment-repository.db`) was deliberately not taken.
+
+## Manual checklist findings (2026-08-30)
+
+Running the maintainer's seven-step manual checklist headlessly surfaced two bugs.
+The second — temporary accepts leaking to later sessions through the shared
+workspace projection — predates this branch and is filed as issue #182, not fixed
+here.
+
+- [x] Reject a decision request without a `bundleHash` instead of accepting it and
+      silently authorizing nothing. `decideEnvironment` files hash-less session
+      decisions under the environment id, a key materialization never consults, so
+      a hash-less `accept` returned `{ok: true}` while the join materialized an
+      empty workspace. The REST endpoint now requires `bundleHash` for every
+      decision (it previously required it only for approve/reject); every client
+      already sends it, and the one internal hash-less caller (`LocationRegistrar`)
+      talks to the manager directly. Covered by new route-level tests
+      (`environmentRoutes.test.ts`) and verified live: hash-less accept → 400,
+      with-hash accept → 200 and the join flow unchanged.

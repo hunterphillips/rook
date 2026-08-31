@@ -81,8 +81,10 @@ export async function registerEnvironmentRoutes(
       reply.code(400).send({ error: "Invalid decision" });
       return;
     }
-    if ((decision === "approve" || decision === "reject") && !bundleHash) {
-      reply.code(400).send({ error: "bundleHash is required for permanent decisions" });
+    // Session decisions are registered per bundle hash; without one the decision
+    // would be filed under a key materialization never consults and authorize nothing.
+    if (!bundleHash) {
+      reply.code(400).send({ error: "bundleHash is required" });
       return;
     }
     const trimmedEnvironmentId = environmentId.trim();

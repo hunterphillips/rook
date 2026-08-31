@@ -27,5 +27,9 @@
 - [x] Address review feedback round 2 (2026-08-25) — one environment row per id,
       publisher-scoped scout writes, no web repository projection, and explicit
       `scoutPublished` read-only handling are complete.
+- [x] Address manual checklist findings (2026-08-30) — decision requests without a
+      `bundleHash` are now rejected with 400 instead of silently authorizing
+      nothing; the cross-session temporary-approval leak is filed as issue #182
+      (predates this branch, not fixed here).
 - [ ] Merge with approval
 - [ ] Record outcomes and clean up
