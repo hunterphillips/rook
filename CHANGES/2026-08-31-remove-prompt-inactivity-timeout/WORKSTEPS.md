@@ -6,12 +6,12 @@
 - [x] Create the change directory and lifecycle record
 - [x] Brainstorm bypassed because the removal scope was established by the prior investigation and the developer approved proceeding
 - [x] Record the agreed decision and TODO after the explicit decision gate
-- [ ] Prepare the implementation workspace after the planning commit
-- [ ] Implement and test
-- [ ] Mark compatibility surfaces
-- [ ] Maintain product and architecture documentation
-- [ ] Run final validation
-- [ ] Synchronize with main before submitting
-- [ ] Open and validate the PR
-- [ ] Merge with approval
-- [ ] Record outcomes and clean up
+- [x] Prepare the implementation workspace after the planning commit
+- [x] Implement and test
+- [x] Mark compatibility surfaces — no compatibility shim or fallback is retained; the removed environment variable is intentionally no longer supported
+- [x] Maintain product and architecture documentation
+- [x] Run final validation
+- [ ] Synchronize with main before submitting — not applicable until a PR is requested; no remote changes were made
+- [ ] Open and validate the PR — not requested; push is prohibited without explicit instruction
+- [ ] Merge with approval — not applicable without a PR
+- [ ] Record outcomes and clean up — deferred until merge
