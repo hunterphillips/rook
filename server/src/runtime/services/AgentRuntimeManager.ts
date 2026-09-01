@@ -34,6 +34,9 @@ export class AgentRuntimeManager {
   private readonly profilesById: Map<string, AgentRuntimeProfile>;
   private readonly sessionRuntimes = new Map<string, SessionRuntime>();
   private readonly runtimeCreationQueues = new Map<string, Promise<SessionRuntime>>();
+  // pi-acp persists session mappings in one shared file. Serialize the ACP
+  // requests that can update it across all public sessions.
+  private acpSessionMutationQueue: Promise<void> = Promise.resolve();
   private readonly runtimeStopQueues = new Map<string, Promise<void>>();
   private readonly transientRuntimes = new Set<SessionRuntime>();
   private readonly runtimeActivities = new Map<string, RuntimeActivity>();
@@ -185,7 +188,9 @@ export class AgentRuntimeManager {
     this.transientRuntimes.add(runtime);
     const beforeRuntimeSessionNew = performance.now();
     try {
-      const result = await this.requestWithTimeout(runtime, "session/new", runtimeSessionParams(profile, { ...params, cwd: workspace.root }, runtime.configuration), this.runtimeRequestTimeoutMs);
+      const result = await this.withAcpSessionMutation(() =>
+        this.requestWithTimeout(runtime, "session/new", runtimeSessionParams(profile, { ...params, cwd: workspace.root }, runtime.configuration), this.runtimeRequestTimeoutMs),
+      );
       const runtimeSessionId = sessionIdFromResult(result);
       const now = new Date().toISOString();
       const record: SessionRecord = {
@@ -242,9 +247,12 @@ export class AgentRuntimeManager {
         await this.sessions.touch(sessionId);
         turnId = this.beginTurn(sessionId);
       }
+      const request = () => this.requestWithTimeout(runtime!, method, runtimeSessionParams(runtime!.profile, runtimeParams, runtime!.configuration), this.runtimeRequestTimeoutMs);
       const result = isPrompt
         ? await runtime.request("session/prompt", runtimeSessionParams(runtime.profile, runtimeParams, runtime.configuration))
-        : await this.requestWithTimeout(runtime, method, runtimeSessionParams(runtime.profile, runtimeParams, runtime.configuration), this.runtimeRequestTimeoutMs);
+        : method === "session/load"
+          ? await this.withAcpSessionMutation(request)
+          : await request();
       if (isPrompt) {
         const diagnostic = turnId === undefined ? undefined : this.turnDiagnostics.get(sessionId)?.get(turnId);
         if (diagnostic?.sawAutomaticRetry && !diagnostic.hasActualContent) {
@@ -350,6 +358,10 @@ export class AgentRuntimeManager {
   async restartSessionForEnvironmentChange(sessionId: string, configuration: SessionRuntimeConfiguration): Promise<void> {
     this.beginRuntimeOperation(sessionId);
     try {
+      // Never retire a runtime while its prompt is still using it. Waiting here
+      // also protects callers that request a restart outside the environment queue.
+      await this.waitForTurnsIdle(sessionId);
+      if (this.closed) return;
       const record = await this.requireSession(sessionId);
       const current = await this.runtimeFor(record, { adoptSession: false });
       const replacement = current.replacement(configuration);
@@ -377,33 +389,36 @@ export class AgentRuntimeManager {
    * runtime recovery must not silently discard a session's conversation.
    */
   private async adoptSessionOnRuntime(record: SessionRecord, replacement: SessionRuntime, configuration: SessionRuntimeConfiguration, options: { allowNew?: boolean } = {}): Promise<string> {
-    try {
-      const result = await this.requestWithTimeout(
-        replacement,
-        "session/load",
-        runtimeSessionParams(replacement.profile, { sessionId: record.runtimeSessionId, cwd: record.cwd, mcpServers: [] }, configuration),
-        this.runtimeRequestTimeoutMs,
-      );
-      if (typeof result === "object" && result !== null && "sessionId" in result && (result as JsonObject).sessionId !== record.runtimeSessionId) {
-        throw new Error("ACP session/load returned a different session ID; refusing to replace session runtime.");
+    return this.withAcpSessionMutation(async () => {
+      try {
+        const result = await this.requestWithTimeout(
+          replacement,
+          "session/load",
+          runtimeSessionParams(replacement.profile, { sessionId: record.runtimeSessionId, cwd: record.cwd, mcpServers: [] }, configuration),
+          this.runtimeRequestTimeoutMs,
+        );
+        if (typeof result === "object" && result !== null && "sessionId" in result && (result as JsonObject).sessionId !== record.runtimeSessionId) {
+          throw new Error("ACP session/load returned a different session ID; refusing to replace session runtime.");
+        }
+        return record.runtimeSessionId;
+      } catch (error) {
+        if (options.allowNew === false || !(error instanceof RuntimeRequestError)) throw error;
+        // Environment-restart recovery retains its existing virgin-session
+        // fallback for never-prompted runtimes; ordinary runtime replacement
+        // never takes this path for historical sessions.
+        const result = await this.requestWithTimeout(
+          replacement,
+          "session/new",
+          runtimeSessionParams(replacement.profile, { cwd: record.cwd, mcpServers: [] }, configuration),
+          this.runtimeRequestTimeoutMs,
+        );
+        this.logger.info(
+          { sessionId: record.sessionId, runtimeId: record.runtimeId, error: error.message, ...(error.code !== undefined ? { code: error.code } : {}) },
+          "session/load failed; recreated runtime session via session/new",
+        );
+        return sessionIdFromResult(result);
       }
-      return record.runtimeSessionId;
-    } catch (error) {
-      if (options.allowNew === false || !(error instanceof RuntimeRequestError)) throw error;
-      // Existing environment-restart recovery retains its virgin-session fallback;
-      // ordinary runtime replacement never takes this path for historical sessions.
-      const result = await this.requestWithTimeout(
-        replacement,
-        "session/new",
-        runtimeSessionParams(replacement.profile, { cwd: record.cwd, mcpServers: [] }, configuration),
-        this.runtimeRequestTimeoutMs,
-      );
-      this.logger.info(
-        { sessionId: record.sessionId, runtimeId: record.runtimeId, error: error.message, ...(error.code !== undefined ? { code: error.code } : {}) },
-        "session/load failed; recreated runtime session via session/new",
-      );
-      return sessionIdFromResult(result);
-    }
+    });
   }
 
   async deleteSession(sessionId: string): Promise<unknown> {
@@ -480,6 +495,7 @@ export class AgentRuntimeManager {
     this.runtimeActivities.clear();
     this.activeTurns.clear();
     this.turnDiagnostics.clear();
+    for (const sessionId of this.turnIdleWaiters.keys()) this.resolveTurnIdleWaiters(sessionId);
     this.turnIdleWaiters.clear();
     this.viewedSessions.clear();
     this.inboundRequestRoutes.clear();
@@ -591,6 +607,7 @@ export class AgentRuntimeManager {
     this.environmentSkillPaths.delete(sessionId);
     this.environmentRestartQueues.delete(sessionId);
     this.restoredEnvironmentMembership.delete(sessionId);
+    this.resolveTurnIdleWaiters(sessionId);
     this.environmentRestorationQueues.delete(sessionId);
     this.workspaceResults.delete(sessionId);
     this.runtimeActivities.delete(sessionId);
@@ -722,24 +739,39 @@ export class AgentRuntimeManager {
     return this.activeTurns.get(sessionId)?.size ?? 0;
   }
 
-  private waitForTurnsIdle(sessionId: string, timeoutMs: number): Promise<boolean> {
+  private waitForTurnsIdle(sessionId: string, timeoutMs?: number): Promise<boolean> {
     if (this.activeTurnCount(sessionId) === 0) return Promise.resolve(true);
     return new Promise((resolve) => {
       const waiters = this.turnIdleWaiters.get(sessionId) ?? new Set<() => void>();
       let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
       const finish = (value: boolean) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timeout);
+        if (timeout !== undefined) clearTimeout(timeout);
         waiters.delete(onIdle);
         if (waiters.size === 0) this.turnIdleWaiters.delete(sessionId);
         resolve(value);
       };
       const onIdle = () => finish(true);
-      const timeout = setTimeout(() => finish(false), timeoutMs);
+      if (timeoutMs !== undefined) timeout = setTimeout(() => finish(false), timeoutMs);
       waiters.add(onIdle);
       this.turnIdleWaiters.set(sessionId, waiters);
     });
+  }
+
+  private async withAcpSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.acpSessionMutationQueue;
+    let release!: () => void;
+    this.acpSessionMutationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   private resolveTurnIdleWaiters(sessionId: string): void {
