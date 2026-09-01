@@ -11,7 +11,7 @@
 - [x] Mark compatibility surfaces — no compatibility shim or fallback is retained; the removed environment variable is intentionally no longer supported
 - [x] Maintain product and architecture documentation
 - [x] Run final validation
-- [ ] Synchronize with main before submitting — not applicable until a PR is requested; no remote changes were made
-- [ ] Open and validate the PR — not requested; push is prohibited without explicit instruction
-- [ ] Merge with approval — not applicable without a PR
+- [x] Synchronize with main before submitting — fetched `origin` and merged `origin/main`; already up to date
+- [ ] Open and validate the PR
+- [ ] Merge with approval — deferred pending review
 - [ ] Record outcomes and clean up — deferred until merge
