@@ -10,6 +10,7 @@ import {
 } from "./environmentMetadataCapture.js";
 import { renderRookIdentityPrompt } from "../support/RookIdentityPrompt.js";
 import { SessionDecisionRegistry } from "./SessionDecisionRegistry.js";
+import { hostForWebEnvironmentId, webEnvironmentIdForHost } from "./WebEnvironmentScoutStore.js";
 import type {
   CandidateEnvironmentRecord,
   EnvironmentDecision,
@@ -124,6 +125,11 @@ function deriveEnvironmentDisplayName(environmentId: string, metadata: Record<st
   return info?.displayName ?? stringMetadata(metadata, "displayName") ?? lastEnvironmentSegment(environmentId);
 }
 
+function canonicalEnvironmentId(environmentId: string): string {
+  const host = hostForWebEnvironmentId(environmentId);
+  return host === null ? environmentId : webEnvironmentIdForHost(host);
+}
+
 function isUserOwnedRepository(repository: string): boolean {
   return repository === "personal" || repository === "project-directory";
 }
@@ -215,6 +221,7 @@ export class EnvironmentManager {
   }
 
   async registerCandidateEnvironment(candidate: CandidateEnvironmentRecord): Promise<void> {
+    candidate = { ...candidate, id: canonicalEnvironmentId(candidate.id) };
     this.pruneMemory();
 
     const nowIso = new Date(this.now()).toISOString();
@@ -329,6 +336,7 @@ export class EnvironmentManager {
   }
 
   decideEnvironment(environmentId: string, decision: EnvironmentDecision, bundleHash?: string, sessionId?: string): void {
+    environmentId = canonicalEnvironmentId(environmentId);
     this.pruneMemory();
     const decisionKey = bundleHash ?? environmentId;
     const bundle = bundleHash
@@ -388,7 +396,7 @@ export class EnvironmentManager {
   }
 
   async getEnvironmentPreview(environmentId: string): Promise<EnvironmentPreview> {
-    return this.repositoryService.getEnvironmentPreview(environmentId);
+    return this.repositoryService.getEnvironmentPreview(canonicalEnvironmentId(environmentId));
   }
 
   async searchEnvironments(query: string): Promise<RepositoryEnvironmentRecord[]> {
@@ -459,6 +467,7 @@ export class EnvironmentManager {
   }
 
   async restoreEnvironment(sessionId: string, environmentId: string): Promise<string[]> {
+    environmentId = canonicalEnvironmentId(environmentId);
     this.pruneMemory();
     const listener = this.listeners.get(sessionId);
     if (!listener) return [];
@@ -480,6 +489,7 @@ export class EnvironmentManager {
   }
 
   async enterEnvironment(sessionId: string, environmentId: string): Promise<string[]> {
+    environmentId = canonicalEnvironmentId(environmentId);
     this.pruneMemory();
     const listener = this.listeners.get(sessionId);
     if (!listener) return [];
@@ -496,6 +506,7 @@ export class EnvironmentManager {
   }
 
   exitEnvironment(sessionId: string, environmentId: string): string[] {
+    environmentId = canonicalEnvironmentId(environmentId);
     this.pruneMemory();
     const listener = this.listeners.get(sessionId);
     if (!listener) return this.enteredEnvironments(sessionId);
