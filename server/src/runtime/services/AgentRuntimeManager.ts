@@ -409,9 +409,9 @@ export class AgentRuntimeManager {
         return record.runtimeSessionId;
       } catch (error) {
         if (options.allowNew === false || !(error instanceof RuntimeRequestError)) throw error;
-        // THIS IS FOR BACKWARDS COMPATIBILITY: Environment-restart recovery
-        // retains its virgin-session fallback for never-prompted runtimes;
-        // ordinary runtime replacement never takes this path for historical sessions.
+        // Environment-restart recovery retains its existing virgin-session
+        // fallback for never-prompted runtimes; ordinary runtime replacement
+        // never takes this path for historical sessions.
         const result = await this.requestWithTimeout(
           replacement,
           "session/new",

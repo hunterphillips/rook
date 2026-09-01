@@ -15,7 +15,7 @@ This is a Rook-side mitigation, not a complete fix for independent `pi-acp` proc
 - [x] Add a server-wide ACP session-mutation gate covering creation, recovery, explicit load, and environment replacement.
 - [x] Make environment-driven runtime replacement wait for active prompts before swapping runtimes.
 - [x] Add regression tests for cross-session mutation serialization and prompt-safe replacement.
-- [x] Inspect changed files for compatibility surfaces and annotate retained compatibility behavior.
+- [x] Inspect changed files for compatibility surfaces; retain the pre-existing fallback without adding a new compatibility marker rejected by repository CI.
 - [x] Update relevant architecture/product documentation.
 - [x] Run focused tests and typecheck; run final build validation before submission.
 - [x] Synchronize with `origin/main` and prepare the pull request.
