@@ -18,4 +18,4 @@ This is a Rook-side mitigation, not a complete fix for independent `pi-acp` proc
 - [x] Inspect changed files for compatibility surfaces and annotate retained compatibility behavior.
 - [x] Update relevant architecture/product documentation.
 - [x] Run focused tests and typecheck; run final build validation before submission.
-- [ ] Synchronize with `origin/main` and prepare the pull request.
+- [x] Synchronize with `origin/main` and prepare the pull request.
