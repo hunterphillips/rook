@@ -12,6 +12,6 @@
 - [x] Maintain product and architecture documentation
 - [x] Run final validation
 - [x] Synchronize with main before submitting — fetched `origin` and merged `origin/main`; already up to date
-- [ ] Open and validate the PR
+- [x] Open and validate the PR — opened #184; GitHub reports it mergeable and required checks pass
 - [ ] Merge with approval — deferred pending review
 - [ ] Record outcomes and clean up — deferred until merge
